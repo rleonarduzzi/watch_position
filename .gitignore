@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# The BROAD recordings are a 1.5 GB upstream dataset; fetch with
+# scripts/get_broad.sh rather than vendoring them.
+data/broad/
+
+# Benchmark intermediates, regenerable with scripts/run_benchmark.py.  The
+# figures under reports/figures/ are committed instead, because the reports
+# embed them.
+reports/cache/
+
+# The paper itself, retrievable from its DOI.
+*.pdf
