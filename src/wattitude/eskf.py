@@ -162,7 +162,12 @@ class AdaptiveESKF:
     exact_phi
         Use the closed-form matrix exponential for the attitude block of the
         discrete transition matrix instead of the first-order approximation of
-        equation (8).
+        equation (8).  On by default: the printed first-order form is not
+        orthogonal and inflates the attitude covariance by roughly
+        ``1 + |omega|^2 dt^2`` per step, which is negligible on gentle motion
+        but corrupts heading above a few hundred degrees per second.  Set False
+        to reproduce the paper; see section 6 of ``reports/derivation_review.md``
+        for the measured cost either way.
     """
 
     def __init__(
@@ -182,7 +187,7 @@ class AdaptiveESKF:
         inject_left: bool | None = None,
         psd_mode: str = "clip",
         max_scale: float = 1e6,
-        exact_phi: bool = False,
+        exact_phi: bool = True,
         gravity: float = GRAVITY,
         estimate_gravity: bool = True,
         init_tilt_std: float = np.deg2rad(5.0),
@@ -351,10 +356,19 @@ class AdaptiveESKF:
 
         # Closed-form matrix exponential of the attitude block: a rotation by
         # -omega*dt, with the dtheta/db_g coupling given by the right Jacobian.
+        # Unlike equation (8) this block is orthogonal, so it cannot inflate the
+        # covariance; see section 6 of reports/derivation_review.md.
         Phi = np.eye(self.dim)
         W = skew(omega)
         rate = float(np.linalg.norm(omega))
         theta = rate * dt
+        if not math.isfinite(theta):
+            # A diverged filter feeds non-finite rates in here.  Propagating the
+            # NaN is correct: the singular innovation covariance it produces is
+            # caught and reported by _inv3_sym on the next update.
+            Phi[0:3, 0:3] = np.nan
+            Phi[0:3, 3:6] = np.nan
+            return Phi
         if theta < 1e-8:
             Phi[0:3, 0:3] = np.eye(3) - W * dt
             Phi[0:3, 3:6] = -np.eye(3) * dt

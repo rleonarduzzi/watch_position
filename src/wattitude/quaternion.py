@@ -28,6 +28,10 @@ __all__ = [
     "quat_from_two_vectors",
     "quat_angle",
     "quat_relative",
+    "quat_to_euler",
+    "euler_to_quat",
+    "euler_gimbal_risk",
+    "GIMBAL_LOCK_PITCH",
 ]
 
 _EPS = 1e-12
@@ -188,3 +192,93 @@ def quat_angle(q: np.ndarray) -> float:
     """Absolute rotation angle of ``q`` in radians, in ``[0, pi]``."""
     q = np.asarray(q, dtype=float).reshape(4)
     return float(2.0 * np.arctan2(np.linalg.norm(q[1:]), abs(q[0])))
+
+
+# Euler angles are provided for display only.  Every internal computation uses
+# quaternions or matrices, because the three-angle parameterisation is singular
+# and the singularity is reachable on real recordings.
+
+GIMBAL_LOCK_PITCH = np.deg2rad(89.9)
+"""Pitch beyond which roll and yaw stop being separately meaningful."""
+
+
+def quat_to_euler(q: np.ndarray) -> np.ndarray:
+    """Intrinsic Z-Y-X Euler angles ``(roll, pitch, yaw)`` in radians.
+
+    The convention is the usual aerospace one: the rotation is applied as yaw
+    about world z, then pitch about the new y, then roll about the new x, so
+    ``R = Rz(yaw) Ry(pitch) Rx(roll)``.  With our z-up world frame, yaw is
+    heading, and roll and pitch together describe the tilt away from vertical.
+
+    Ranges are ``roll, yaw in (-pi, pi]`` and ``pitch in [-pi/2, pi/2]``.
+
+    Near ``pitch = +-pi/2`` the parameterisation is degenerate: only the
+    combination ``roll -+ yaw`` is determined, and the two angles can swing
+    through any value at all without the underlying attitude moving. There
+    roll is reported as zero and the whole rotation is placed in yaw, which is
+    a choice rather than a fact.  :func:`euler_gimbal_risk` flags the samples
+    where this matters; do not read roll or yaw traces through those regions.
+
+    Accepts ``(4,)`` or ``(T, 4)`` and returns a matching ``(3,)`` or ``(T, 3)``.
+    """
+    q = np.asarray(q, dtype=float)
+    single = q.ndim == 1
+    q = np.atleast_2d(q)
+    w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+
+    # pitch = -asin(R[2, 0]) with R[2, 0] = 2 (xz - wy).
+    sin_pitch = np.clip(2.0 * (w * y - x * z), -1.0, 1.0)
+    pitch = np.arcsin(sin_pitch)
+
+    # Away from the singularity, roll and yaw come from the third row and first
+    # column of R respectively.
+    roll = np.arctan2(2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y))
+    yaw = np.arctan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
+
+    locked = np.abs(sin_pitch) > np.sin(GIMBAL_LOCK_PITCH)
+    if np.any(locked):
+        # Only roll -+ yaw survives; put it all in yaw and zero the roll.
+        # R[0, 1] and R[1, 1] reduce to sin and cos of that combination.
+        r01 = 2.0 * (x[locked] * y[locked] - w[locked] * z[locked])
+        r11 = 1.0 - 2.0 * (x[locked] * x[locked] + z[locked] * z[locked])
+        roll[locked] = 0.0
+        yaw[locked] = np.arctan2(-r01, r11)
+
+    out = np.stack([roll, pitch, yaw], axis=1)
+    return out[0] if single else out
+
+
+def euler_to_quat(euler: np.ndarray) -> np.ndarray:
+    """Inverse of :func:`quat_to_euler`, exact away from the singularity."""
+    e = np.asarray(euler, dtype=float)
+    single = e.ndim == 1
+    e = np.atleast_2d(e)
+    half = 0.5 * e
+    cr, cp, cy = np.cos(half[:, 0]), np.cos(half[:, 1]), np.cos(half[:, 2])
+    sr, sp, sy = np.sin(half[:, 0]), np.sin(half[:, 1]), np.sin(half[:, 2])
+
+    q = np.stack(
+        [
+            cr * cp * cy + sr * sp * sy,
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+        ],
+        axis=1,
+    )
+    q = q / np.linalg.norm(q, axis=1, keepdims=True)
+    q[q[:, 0] < 0.0] *= -1.0
+    return q[0] if single else q
+
+
+def euler_gimbal_risk(q: np.ndarray, margin_deg: float = 10.0) -> np.ndarray:
+    """Boolean mask of samples whose pitch is within ``margin_deg`` of vertical.
+
+    Roll and yaw become increasingly ill-conditioned as pitch approaches
+    ``+-90`` degrees, well before the hard singularity: a small attitude change
+    produces an arbitrarily large change in both angles.  Use this to mark or
+    exclude those stretches when plotting, rather than presenting the swings as
+    estimation error.
+    """
+    pitch = np.atleast_2d(quat_to_euler(q))[:, 1]
+    return np.abs(pitch) > np.deg2rad(90.0 - margin_deg)

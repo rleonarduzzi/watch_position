@@ -4,7 +4,7 @@ Reference: S. Bai, Y. Lyu, Z. Lyu, R. Xu, X. Wang, W. Wen, *Watch Your Position:
 Neural Inertial Localization with a Single Wrist-worn Device*, TechRxiv preprint
 `10.36227/techrxiv.175492124.47988269/v1`, Section IV.A, equations (1)-(20).
 
-All claims below are produced by `scripts/verify_derivation.py` (8/8 checks
+All claims below are produced by `scripts/verify_derivation.py` (10/10 checks
 passing) and are locked in as regression tests in `tests/test_jacobians.py`.
 
 ## Summary
@@ -12,20 +12,26 @@ passing) and are locked in as regression tests in `tests/test_jacobians.py`.
 The filter structure is a standard 9-state error-state Kalman filter and its
 adaptive measurement covariance (equation 17) is the Mohamed-Schwarz
 innovation-based estimator. Four printed equations are inconsistent with the
-error convention that the paper itself fixes in equation (5), and two structural
-properties of the gravity measurement are worth stating explicitly. None of this
-invalidates the method; the corrections are local and the adaptive mechanism is
-sound.
+error convention that the paper itself fixes in equation (5), one is a valid
+approximation that fails at high angular rate, and two structural properties of
+the gravity measurement are worth stating explicitly. None of this invalidates
+the method; the corrections are local and the adaptive mechanism is sound.
 
 | Equation | Status | Issue |
 | --- | --- | --- |
 | (5) `F` | correct | Fixes the error convention to the body-frame (right) side |
 | (6) `G` | see (9) | Couples `dtheta` and `db_g` to the same white noise |
+| (8) `Phi` | rate-limited | Not orthogonal; inflates the covariance as `|w|^2 dt^2` |
 | (9) `Q` | wrong | Rank 6 of 9; no independent gyro-bias random walk |
 | (13) `H` | sign error | Bias block is `+I`, printed as `-I` |
 | (14) `K` | typo | Transpose printed where the inverse belongs |
 | (17) `R` | needs guarding | Routinely indefinite; `+eps*I` is not sufficient |
 | (20) `q` | wrong side | Must be `q (x) dq`, printed as `dq (x) q` |
+
+Equation (8) is the one with consequences on real data, and it was found by
+plotting attitude traces rather than by inspecting the algebra; see
+`attitude_tracking.md`. The others are either benign in practice or produce
+immediate, obvious failure.
 
 ## Conventions fixed by equation (5)
 
@@ -167,7 +173,80 @@ accelerometer is automatically distrusted. Three practical gaps:
 A ceiling (`max_scale` multiples of nominal) is also exposed, so that one large
 transient cannot switch the accelerometer off for the remainder of a sequence.
 
-## 6. Structural properties: what the gravity measurement cannot do
+## 6. Equation (8): the first-order transition matrix inflates the covariance
+
+```
+Phi_k = I + F_k dt     =>    attitude block   I - skew(w_k) dt
+```
+
+Truncating the matrix exponential at first order is standard and is harmless at
+modest rates, but it has a property that matters more than its truncation error:
+`I - skew(w) dt` is **not orthogonal**, whereas the exact attitude block is a
+rotation. Its largest singular value is
+
+```
+sigma_max = sqrt(1 + |w|^2 dt^2)  ~  1 + theta^2 / 2,    theta = |w| dt
+```
+
+so every propagation step multiplies the attitude covariance by about
+`1 + theta^2` along one direction, with nothing in the filter to remove it. The
+inflation is spurious -- it is not uncertainty growth from any noise source, it
+is an artefact of a non-normal transition -- and it scales as the square of the
+angular rate, so it is invisible on gentle data and severe on fast data. At
+BROAD's 285.7 Hz:
+
+| `|w|` | | `theta` | growth per step | growth over 1 minute |
+| --- | --- | --- | --- | --- |
+| 0.5 rad/s | 29 deg/s | 0.100 deg | 1.0000031 | 1.05x |
+| 5 rad/s | 286 deg/s | 1.003 deg | 1.0003063 | 190x |
+| 12.7 rad/s | 728 deg/s | 2.547 deg | 1.0019758 | 5.0e+14 |
+
+The measurement updates fight the inflation, so the covariance reaches an
+inflated steady state rather than diverging, and the filter then runs with
+systematically over-large gains. The practical consequence is not a loss of
+tilt accuracy, which the inflated gain can even improve, but a corruption of
+heading: over-large corrections acquire a component along the locally
+unobservable vertical, and nothing can ever remove it. On
+`21_undisturbed_fast_combined` (peak 728 deg/s) the yaw error reaches 193
+degrees with equation (8) and 7 degrees with the exact form.
+
+The closed form costs more arithmetic but restores orthogonality exactly:
+
+```
+attitude block:   I - sin(theta) K + (1 - cos theta) K^2,     K = skew(w / |w|)
+coupling block:  -(I dt - (1 - cos theta)/|w| K + (theta - sin theta)/|w| K^2)
+```
+
+whose singular values are exactly 1, at 144 against 106 microseconds per sample
+(still 24x real time at 285.7 Hz). `scripts/verify_derivation.py` checks both
+the singular-value claim and that the two forms agree to `O(theta^2)` as
+`theta -> 0`.
+
+Honesty requires reporting that fixing this is not a clean win. Averaged over
+all 39 trials, at each form's own best `sigma_acc`:
+
+| transition | inclination RMSE | total RMSE |
+| --- | --- | --- |
+| equation (8), first order | **1.254 deg** | 9.355 deg |
+| closed form | 1.758 deg | **3.573 deg** |
+
+The inflated covariance produces over-large gains, and over-large gains happen
+to track tilt slightly better on this dataset while wrecking heading. So
+equation (8) is better on the inclination metric by 0.5 degrees and worse on
+total error by 5.8 degrees. Lowering `sigma_acc` under the closed form does not
+recover the inclination, so this is not purely a gain effect.
+
+`exact_phi=True` is nonetheless the default, on the grounds that a filter whose
+covariance is wrong is not a correct filter even where the error flatters one
+metric: the inclination advantage is an accident of a non-normal transition, not
+a modelling choice, and anything genuinely wanted from a larger gain should be
+obtained by tuning `sigma_acc`. For the downstream pipeline the trade also runs
+the right way, since a heading error rotates both world-frame signals bodily
+while a tilt error of half a degree does not. Anyone reproducing the paper's
+printed filter, or optimising inclination alone, should set
+`exact_phi=False` and will get the better number.
+
+## 7. Structural properties: what the gravity measurement cannot do
 
 These are not errors, but they bound what the filter can achieve and they shape
 how it must be evaluated.

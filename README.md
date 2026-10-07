@@ -16,6 +16,9 @@ downstream model never has to learn rotation invariance.
   literally.
 - `reports/benchmark_results.md` — results on the 39 trials of the BROAD
   benchmark against Madgwick, Mahony, VQF and open-loop integration.
+- `reports/attitude_tracking.md` — estimated against reference attitude as roll,
+  pitch and yaw, for this filter and VQF. This is what turned up the
+  equation (8) defect that the aggregate scores had hidden.
 
 ## Install
 
@@ -116,11 +119,38 @@ motion; under sustained external acceleration the bias state absorbs the
 disturbance instead, so the 6-state variant is the safer default on vehicle- or
 sports-like motion.
 
+`exact_phi` controls the transition matrix used to propagate the covariance and
+defaults to the closed form rather than the paper's first-order equation (8).
+The printed form is not orthogonal, so it inflates the attitude covariance in
+proportion to the square of the angular rate; above a few hundred degrees per
+second that corrupts heading badly. Setting `exact_phi=False` reproduces the
+paper and is about 30% faster, and happens to score slightly better on
+inclination alone. Section 6 of `reports/derivation_review.md` has the numbers.
+
 The three flags `paper_process_noise`, `h_bias_sign` and `inject_left` reproduce
 the printed equations (9), (13) and (20) literally, each independently, and
 `paper_faithful=True` sets all three. They exist to reproduce the discrepancies
 documented in `reports/derivation_review.md`; the combination diverges and
 raises `FilterDivergenceError`.
+
+## Euler angles
+
+For display and for interfacing with code that expects three angles:
+
+```python
+from wattitude.quaternion import quat_to_euler, euler_to_quat, euler_gimbal_risk
+
+roll, pitch, yaw = quat_to_euler(est.quat)        # radians, intrinsic Z-Y-X
+mask = euler_gimbal_risk(quats)                   # pitch within 10 deg of vertical
+```
+
+The convention is `R = Rz(yaw) Ry(pitch) Rx(roll)`, with roll and yaw in
+`(-pi, pi]` and pitch in `[-pi/2, pi/2]`. Nothing inside the filter uses Euler
+angles, and neither should anything downstream: near vertical pitch, roll and
+yaw are not separately determined and both can swing arbitrarily while the
+attitude barely moves. `euler_gimbal_risk` flags where that applies.
+`reports/attitude_tracking.md` plots estimated against reference attitude in
+these angles.
 
 ## Tests
 

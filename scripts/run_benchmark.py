@@ -30,8 +30,9 @@ SPECS: list[tuple[str, str, dict, bool]] = [
     ("madgwick_adaptive_6d", "madgwick_adaptive", {}, False),
     ("mahony_6d", "mahony", {}, False),
     ("vqf_6d", "vqf", {}, False),
-    ("eskf_adaptive", "eskf", {"adaptive": True}, False),
-    ("eskf_fixed", "eskf", {"adaptive": False}, False),
+    ("eskf_adaptive", "eskf", {"adaptive": True, "exact_phi": False}, False),
+    ("eskf_fixed", "eskf", {"adaptive": False, "exact_phi": False}, False),
+    ("eskf_exactphi", "eskf", {"adaptive": True, "exact_phi": True}, False),
     # 9-axis Madgwick reproduces BROAD's published reference numbers and so
     # validates the harness against an external result.
     ("madgwick_9d", "madgwick", {}, True),

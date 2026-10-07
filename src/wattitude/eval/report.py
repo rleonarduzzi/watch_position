@@ -11,16 +11,28 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ..baselines import ESTIMATORS
 from ..data import broad
 from ..eskf import run_batch
-from ..eval.metrics import error_series
+from ..eval.metrics import (
+    apply_heading_offset,
+    error_series,
+    optimal_heading_offset,
+    orientation_errors,
+)
 from ..eval.runner import default_cache, init_window_for
 from ..eval.tuning import METRICS, SELECTION_METRIC, per_group, tagp
+from ..quaternion import euler_gimbal_risk, quat_to_euler
 
 __all__ = [
     "load_variant",
     "tagp_table",
     "group_table",
+    "nominal_sweep",
+    "matched_nominal_groups",
+    "euler_tracking",
+    "plot_euler_tracking",
+    "plot_nominal_sweep",
     "plot_adaptation",
     "plot_group_errors",
     "figures_dir",
@@ -42,8 +54,9 @@ PRETTY = {
     "madgwick_adaptive_6d": "Madgwick 6D, adaptive beta",
     "mahony_6d": "Mahony 6D",
     "vqf_6d": "VQF 6D",
-    "eskf_fixed": "ESKF, fixed R",
-    "eskf_adaptive": "ESKF, adaptive R",
+    "eskf_fixed": "ESKF, fixed R, eq. (8)",
+    "eskf_adaptive": "ESKF, adaptive R, eq. (8)",
+    "eskf_exactphi": "ESKF, adaptive R, exact Phi",
     "madgwick_9d": "Madgwick 9D (harness check)",
 }
 
@@ -226,6 +239,145 @@ def plot_adaptation(trial_name: str, out: Path | None = None, **eskf_kwargs):
         "incl_adaptive": float(np.sqrt(np.nanmean(incl_ad[trial.movement] ** 2))),
         "incl_fixed": float(np.sqrt(np.nanmean(incl_fx[trial.movement] ** 2))),
     }
+
+
+def _break_wraps(angle_deg: np.ndarray, jump: float = 180.0) -> np.ndarray:
+    """Insert NaN at +-180 degree wraps so no vertical line is drawn across them.
+
+    Keeps the plotted values inside the natural range instead of unwrapping them
+    into the hundreds of degrees, at the cost of a one-sample gap at each wrap.
+    """
+    out = np.asarray(angle_deg, dtype=float).copy()
+    d = np.abs(np.diff(out))
+    out[1:][d > jump] = np.nan
+    return out
+
+
+def _decimate(n: int, limit: int) -> slice:
+    return slice(None, None, max(1, int(np.ceil(n / limit))))
+
+
+def euler_tracking(trial_name: str, eskf_params: dict | None = None,
+                   vqf_params: dict | None = None) -> dict:
+    """Ground-truth and estimated attitude for one trial, as Euler angles.
+
+    Both estimators are magnetometer-free, so their heading is expressed in
+    their own initial frame rather than the optical system's.  Each estimate
+    therefore has its optimal constant heading offset removed first -- the same
+    alignment the error metric applies -- otherwise the yaw panel would show a
+    meaningless constant difference and nothing else.
+    """
+    trial = broad.load_trial(trial_name)
+    window = init_window_for(trial)
+    movement = trial.movement
+
+    series = {}
+    for name, params in (
+        ("eskf", eskf_params or {"sigma_acc": 200.0}),
+        ("vqf", vqf_params or {"tauAcc": 3.0}),
+    ):
+        quats = ESTIMATORS[name](
+            trial.gyr, trial.acc, trial.rate, init_slice=window, **params
+        )
+        offset = optimal_heading_offset(quats, trial.opt_quat, movement)
+        aligned = apply_heading_offset(quats, offset)
+        series[name] = {
+            "euler": np.rad2deg(quat_to_euler(aligned)),
+            "errors": orientation_errors(
+                quats, trial.opt_quat, movement, trial.rate, align_heading=True
+            ),
+            "total_series": np.rad2deg(
+                error_series(quats, trial.opt_quat, movement)["total"]
+            ),
+            "heading_offset_deg": float(np.rad2deg(offset)),
+            "params": params,
+        }
+
+    return {
+        "trial": trial,
+        "truth": np.rad2deg(quat_to_euler(trial.opt_quat)),
+        "gimbal_risk": euler_gimbal_risk(trial.opt_quat, margin_deg=10.0),
+        "series": series,
+    }
+
+
+def plot_euler_tracking(trial_name: str, out: Path | None = None,
+                        max_points: int = 6000, zoom: tuple[float, float] | None = None,
+                        **kwargs):
+    """Plot roll, pitch and yaw of both estimates against the optical reference.
+
+    ``zoom`` restricts the view to a ``(start, stop)`` time range in seconds,
+    which is the only way to see the sample-level behaviour on a recording of a
+    few hundred thousand samples.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    data = euler_tracking(trial_name, **kwargs)
+    trial = data["trial"]
+    t = np.arange(len(trial)) / trial.rate
+
+    # Restrict to the annotated movement phase: the long rest periods either
+    # side carry no information and would compress everything interesting.
+    movement = trial.movement
+    lo, hi = int(np.argmax(movement)), int(len(movement) - np.argmax(movement[::-1]))
+    if zoom is not None:
+        lo = max(lo, int(zoom[0] * trial.rate))
+        hi = min(hi, int(zoom[1] * trial.rate))
+    view = slice(lo, hi)
+    step = _decimate(hi - lo, max_points)
+
+    tv = t[view][step]
+    truth = data["truth"][view][step]
+    risk = data["gimbal_risk"][view][step]
+
+    styles = {
+        "eskf": dict(color="tab:green", lw=0.9, label="ESKF (this filter)"),
+        "vqf": dict(color="tab:purple", lw=0.9, label="VQF"),
+    }
+
+    fig, axes = plt.subplots(4, 1, figsize=(12, 9.5), sharex=True)
+    for i, name in enumerate(("roll", "pitch", "yaw")):
+        ax = axes[i]
+        ax.plot(tv, _break_wraps(truth[:, i]), color="k", lw=1.4, alpha=0.75,
+                label="optical ground truth", zorder=3)
+        for key, style in styles.items():
+            euler = data["series"][key]["euler"][view][step]
+            ax.plot(tv, _break_wraps(euler[:, i]), zorder=4, **style)
+        ax.set_ylabel(f"{name} (deg)")
+        ax.grid(alpha=0.25)
+        # Roll and yaw are ill-conditioned near vertical pitch; shade it so the
+        # resulting swings are not mistaken for estimation error.
+        if name in ("roll", "yaw") and np.any(risk):
+            ax.fill_between(tv, *ax.get_ylim(), where=risk, color="tab:orange",
+                            alpha=0.15, step="mid", zorder=0,
+                            label="pitch within 10 deg of vertical")
+        ax.legend(loc="upper right", fontsize=7, ncol=2)
+
+    ax = axes[3]
+    for key, style in styles.items():
+        err = data["series"][key]["total_series"][view][step]
+        ax.plot(tv, err, **style)
+    ax.set_ylabel("total error (deg)")
+    ax.set_xlabel("time (s)")
+    ax.grid(alpha=0.25)
+    ax.legend(loc="upper right", fontsize=7)
+
+    incl = {k: v["errors"].inclination_rmse_deg for k, v in data["series"].items()}
+    axes[0].set_title(
+        f"{trial_name} -- inclination RMSE: "
+        f"ESKF {incl['eskf']:.2f} deg, VQF {incl['vqf']:.2f} deg"
+        + ("" if zoom is None else f"  (zoom {zoom[0]:.0f}-{zoom[1]:.0f} s)")
+    )
+    fig.tight_layout()
+
+    suffix = "" if zoom is None else "_zoom"
+    out = out or figures_dir() / f"euler_{trial_name.split('_')[0]}{suffix}.png"
+    fig.savefig(out, dpi=135)
+    plt.close(fig)
+    return out, data
 
 
 def plot_group_errors(tags: list[str], out: Path | None = None,

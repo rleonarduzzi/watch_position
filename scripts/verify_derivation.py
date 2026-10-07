@@ -257,6 +257,54 @@ def check_observability() -> None:
     )
 
 
+def check_transition_orthogonality() -> None:
+    """Equation (8) is not orthogonal, so it inflates the covariance.
+
+    The exact attitude block is a rotation and preserves the covariance norm;
+    the printed first-order form stretches it by ``1 + theta^2/2`` per step,
+    which is spurious growth unrelated to any noise source.
+    """
+    from wattitude.eskf import AdaptiveESKF
+
+    dt = 7.0 / 2000.0
+    rate = 12.7  # peak angular rate on BROAD's fastest trial, 728 deg/s
+    omega = np.array([rate, 0.0, 0.0])
+    theta = rate * dt
+
+    first_order = np.eye(3) - skew(omega) * dt
+    exact = AdaptiveESKF(rate=1.0 / dt, exact_phi=True)._transition(omega, dt)[0:3, 0:3]
+
+    s_first = np.linalg.svd(first_order, compute_uv=False)
+    s_exact = np.linalg.svd(exact, compute_uv=False)
+    predicted = np.sqrt(1.0 + theta * theta)
+
+    record(
+        "equation (8) is not orthogonal, the exact form is",
+        np.allclose(s_exact, 1.0, atol=1e-12)
+        and abs(s_first.max() - predicted) < 1e-12
+        and s_first.max() > 1.0,
+        f"at {np.degrees(rate):.0f} deg/s the printed Phi has singular values "
+        f"{np.round(s_first, 9)} (max {s_first.max():.9f} = sqrt(1+theta^2)), "
+        f"against {np.round(s_exact, 12)} for the closed form; the covariance "
+        f"therefore grows {s_first.max() ** 2:.7f} per step, "
+        f"{(s_first.max() ** 2) ** int(60 / dt):.2e} over a minute",
+    )
+
+    # The two must still agree to first order, or the fast path would be wrong
+    # rather than merely non-orthogonal.
+    slow = np.array([0.01, 0.0, 0.0])
+    a = np.eye(3) - skew(slow) * dt
+    b = AdaptiveESKF(rate=1.0 / dt, exact_phi=True)._transition(slow, dt)[0:3, 0:3]
+    err = np.max(np.abs(a - b))
+    bound = (np.linalg.norm(slow) * dt) ** 2
+    record(
+        "the two transition forms agree to O(theta^2)",
+        err < bound,
+        f"at {np.degrees(np.linalg.norm(slow)):.2f} deg/s they differ by "
+        f"{err:.3e}, below theta^2 = {bound:.3e}",
+    )
+
+
 def main() -> int:
     print("=" * 78)
     print("Verification of Section IV.A (Bai et al., adaptive ESKF attitude)")
@@ -267,6 +315,7 @@ def main() -> int:
     check_Q_rank()
     check_gain_transpose()
     check_observability()
+    check_transition_orthogonality()
     print("-" * 78)
     n_fail = sum(1 for _, ok, _ in RESULTS if not ok)
     print(f"{len(RESULTS) - n_fail}/{len(RESULTS)} checks passed")

@@ -29,7 +29,7 @@ from wattitude.eval.tuning import METRICS, SELECTION_METRIC, itop, tagp
 ROOT = Path(__file__).resolve().parents[1]
 SIX_AXIS = [
     "gyro_only", "madgwick_6d", "madgwick_adaptive_6d", "mahony_6d",
-    "vqf_6d", "eskf_fixed", "eskf_adaptive",
+    "vqf_6d", "eskf_fixed", "eskf_adaptive", "eskf_exactphi",
 ]
 # Nominal accelerometer sigma used for the adaptation figure: deliberately left
 # at the instrument noise level so the adapted covariance, not the nominal, is
@@ -103,6 +103,19 @@ def main() -> None:
         "inclination_rmse_deg": "inclination", "drift_deg_per_min": "|drift| deg/min",
     })
     A(tbl.to_markdown(floatfmt=".3f") + "\n")
+    A(
+        "The two `eq. (8)` rows use the paper's printed first-order transition "
+        "matrix; the `exact Phi` row uses the closed form and is the library "
+        "default. That matrix is not orthogonal and inflates the attitude "
+        "covariance at a rate proportional to the square of the angular rate, "
+        "which costs little inclination accuracy but a great deal of heading "
+        "accuracy, as the total-error column shows. The defect was found by "
+        "plotting attitude traces rather than by reading these tables; see "
+        "`attitude_tracking.md` and section 6 of `derivation_review.md`. The "
+        "adaptive-versus-fixed comparison below is between the two `eq. (8)` "
+        "rows, so that the transition matrix is held constant and only the "
+        "covariance adaptation differs.\n"
+    )
     A(
         "Total and heading error are reported for completeness but are not "
         "meaningful comparators here: they are dominated by the unobservable "
