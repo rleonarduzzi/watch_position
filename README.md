@@ -19,6 +19,8 @@ downstream model never has to learn rotation invariance.
 - `reports/attitude_tracking.md` — estimated against reference attitude as roll,
   pitch and yaw, for this filter and VQF. This is what turned up the
   equation (8) defect that the aggregate scores had hidden.
+- `reports/frame_conventions.md` — why VQF's output needs no rotation into the
+  dataset's ENU frame while Madgwick's and Mahony's 9-axis output does.
 
 ## Install
 

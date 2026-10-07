@@ -20,8 +20,15 @@ import pytest
 
 from wattitude.baselines import ESTIMATORS
 from wattitude.data import broad
-from wattitude.eval.metrics import orientation_errors, rmse, total_error
+from wattitude.eval.metrics import (
+    apply_heading_offset,
+    optimal_heading_offset,
+    orientation_errors,
+    rmse,
+    total_error,
+)
 from wattitude.eval.runner import init_window_for
+from wattitude.quaternion import quat_angle
 
 pytestmark = [
     pytest.mark.broad,
@@ -132,6 +139,85 @@ def test_static_init_window_is_quiescent_on_every_trial():
         # The window must precede the annotated motion, or initialisation would
         # be averaging over real movement.
         assert window.stop <= int(np.argmax(trial.movement)), f"{name}: window overlaps motion"
+
+
+def test_vqf_needs_no_rotation_into_the_datasets_vertical_convention():
+    """Pins the argument in reports/frame_conventions.md.
+
+    Inclination is the angle between estimated and true vertical, so it is
+    invariant to rotation about the vertical and sensitive to exactly the part
+    of the ENU convention that a 6-axis filter can observe.  A flipped z axis, a
+    ``-g`` sign convention or a transposed rotation would put this near 180
+    degrees; sub-degree values are only reachable if the convention matches.
+    """
+    for name in (REFERENCE_TRIAL, "15_undisturbed_fast_translation_A"):
+        trial = broad.load_trial(name)
+        quats = ESTIMATORS["vqf"](
+            trial.gyr, trial.acc, trial.rate, init_slice=init_window_for(trial)
+        )
+        errors = orientation_errors(
+            quats, trial.opt_quat, trial.movement, trial.rate, align_heading=True
+        )
+        assert errors.inclination_rmse_deg < 1.5, f"{name}: {errors}"
+
+
+def test_reference_frame_heading_origin_is_the_start_of_each_recording():
+    """BROAD's 'aligned' optical data starts near identity, which is why the
+    heading origins of VQF and of the dataset nearly coincide."""
+    angles = []
+    for name in broad.trial_names():
+        trial = broad.load_trial(name)
+        finite = np.isfinite(trial.opt_quat).all(axis=1)
+        first = trial.opt_quat[int(np.argmax(finite))]
+        angles.append(np.rad2deg(quat_angle(first)))
+    angles = np.array(angles)
+    assert angles.max() < 15.0, f"worst start {angles.max():.2f} deg"
+    assert np.mean(angles < 5.0) > 0.75
+
+
+def test_vqf_heading_offsets_are_scattered_not_a_constant_convention_error():
+    """A missing fixed rotation would show up as the same offset every trial."""
+    offsets = []
+    for name in broad.trial_names()[:12]:
+        trial = broad.load_trial(name)
+        quats = ESTIMATORS["vqf"](
+            trial.gyr, trial.acc, trial.rate, init_slice=init_window_for(trial)
+        )
+        offsets.append(
+            np.rad2deg(optimal_heading_offset(quats, trial.opt_quat, trial.movement))
+        )
+    offsets = np.array(offsets)
+    # Small and varying, rather than clustered at 90 or 180 degrees.
+    assert np.abs(np.median(offsets)) < 10.0, f"median offset {np.median(offsets):.2f}"
+    assert np.all(np.abs(offsets) < 45.0), f"offsets {np.round(offsets, 1)}"
+
+
+def test_madgwick_9d_needs_the_enu_yaw_fix_that_vqf_does_not():
+    """The converse check: for Madgwick the rotation is load-bearing.
+
+    Madgwick's magnetic reference lies along x, so its 9-axis output is 90
+    degrees of heading away from ENU without ``_ENU_FIX``.  Undoing the fix must
+    therefore cost about 90 degrees of heading error, which is what distinguishes
+    a real convention mismatch from VQF's merely arbitrary heading.
+    """
+    trial = broad.load_trial(REFERENCE_TRIAL)
+    quats = ESTIMATORS["madgwick"](
+        trial.gyr, trial.acc, trial.rate, mag=trial.mag, beta=REFERENCE_BETA
+    )
+    corrected = orientation_errors(
+        quats, trial.opt_quat, trial.movement, trial.rate, align_heading=False
+    )
+    undone = apply_heading_offset(quats, -np.pi / 2)
+    broken = orientation_errors(
+        undone, trial.opt_quat, trial.movement, trial.rate, align_heading=False
+    )
+    assert corrected.heading_rmse_deg < 5.0
+    assert broken.heading_rmse_deg > 80.0
+    # Inclination is untouched either way, since the fix is a rotation about the
+    # vertical.  This is the same invariance the VQF argument relies on.
+    assert broken.inclination_rmse_deg == pytest.approx(
+        corrected.inclination_rmse_deg, rel=1e-9
+    )
 
 
 def test_gyro_only_is_beaten_by_every_accelerometer_aided_filter_on_inclination():
