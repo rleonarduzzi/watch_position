@@ -32,6 +32,8 @@ __all__ = [
     "matched_nominal_groups",
     "euler_tracking",
     "plot_euler_tracking",
+    "plot_euler_interactive",
+    "plot_euler_dropdown",
     "plot_nominal_sweep",
     "plot_adaptation",
     "plot_group_errors",
@@ -391,6 +393,231 @@ def plot_euler_tracking(trial_name: str, out: Path | None = None,
     fig.savefig(out, dpi=135)
     plt.close(fig)
     return out, data
+
+
+def _true_spans(mask: np.ndarray, t: np.ndarray) -> list[tuple[float, float]]:
+    """Time intervals where ``mask`` is true, widened by half a sample."""
+    mask = np.asarray(mask, dtype=bool)
+    if mask.size == 0 or not np.any(mask):
+        return []
+    padded = np.concatenate(([False], mask, [False]))
+    edges = np.diff(padded.astype(np.int8))
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1) - 1
+    dt = float(np.median(np.diff(t))) if len(t) > 1 else 0.0
+    half = 0.5 * dt
+    return [
+        (float(t[s] - half), float(t[e] + half))
+        for s, e in zip(starts, ends)
+    ]
+
+
+def _euler_figure(data: dict, trial_name: str | None = None,
+                  max_points: int | None = None):
+    """Plotly figure of one Euler-tracking result. See :func:`plot_euler_interactive`."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    trial = data["trial"]
+    trial_name = trial_name or getattr(trial, "name", "trial")
+    t = np.arange(len(trial)) / trial.rate
+
+    movement = np.asarray(trial.movement, dtype=bool)
+    lo = int(np.argmax(movement))
+    hi = int(len(movement) - np.argmax(movement[::-1]))
+    view = slice(lo, hi)
+    step = _decimate(hi - lo, max_points) if max_points else slice(None)
+
+    tv = t[view][step]
+    truth = data["truth"][view][step]
+    risk = np.asarray(data["gimbal_risk"][view][step], dtype=bool)
+
+    colors = {"eskf": "#2ca02c", "vqf": "#9467bd"}
+    labels = {"eskf": "ESKF (this filter)", "vqf": "VQF"}
+
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.04,
+    )
+    hover = "%{y:.1f}°<extra>%{fullData.name}</extra>"
+    for i, angle in enumerate(("roll", "pitch", "yaw")):
+        row = i + 1
+        fig.add_trace(go.Scatter(
+            x=tv, y=_break_wraps(truth[:, i]), name="optical ground truth",
+            legendgroup="truth", showlegend=(i == 0),
+            line=dict(color="black", width=1.6), hovertemplate=hover,
+        ), row=row, col=1)
+        for key in ("eskf", "vqf"):
+            euler = data["series"][key]["euler"][view][step]
+            fig.add_trace(go.Scatter(
+                x=tv, y=_break_wraps(euler[:, i]), name=labels[key],
+                legendgroup=key, showlegend=(i == 0),
+                line=dict(color=colors[key], width=1.2), hovertemplate=hover,
+            ), row=row, col=1)
+        fig.update_yaxes(title_text=f"{angle} (deg)", row=row, col=1)
+
+    for key in ("eskf", "vqf"):
+        err = data["series"][key]["total_series"][view][step]
+        fig.add_trace(go.Scatter(
+            x=tv, y=err, name=labels[key], legendgroup=key, showlegend=False,
+            line=dict(color=colors[key], width=1.2), hovertemplate=hover,
+        ), row=4, col=1)
+    fig.update_yaxes(title_text="total error (deg)", row=4, col=1)
+    fig.update_xaxes(title_text="time (s)", row=4, col=1)
+
+    # One legend entry for the bands. The rectangles themselves are shapes.
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None], mode="markers",
+        marker=dict(size=12, color="rgba(255, 127, 14, 0.55)", symbol="square"),
+        name="pitch within 10° of vertical",
+        legendgroup="risk", showlegend=True, hoverinfo="skip",
+    ), row=1, col=1)
+    for x0, x1 in _true_spans(risk, tv):
+        for row in (1, 3):
+            fig.add_vrect(
+                x0=x0, x1=x1, fillcolor="rgba(255, 127, 14, 0.18)",
+                line_width=0, layer="below", row=row, col=1,
+            )
+
+    incl = {k: v["errors"].inclination_rmse_deg for k, v in data["series"].items()}
+    fig.update_layout(
+        height=960,
+        title=dict(
+            text=(
+                f"{trial_name} -- inclination RMSE: "
+                f"ESKF {incl['eskf']:.2f}°, VQF {incl['vqf']:.2f}°"
+            ),
+            x=0.5,
+        ),
+        hovermode="x unified",
+        dragmode="zoom",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0),
+        margin=dict(l=70, r=24, t=100, b=48),
+        template="plotly_white",
+    )
+    fig.update_xaxes(
+        showspikes=True, spikemode="across", spikethickness=1,
+        spikedash="dot", spikecolor="gray",
+    )
+    # The slider is the overview; box-zoom and scroll-zoom inspect a window.
+    fig.update_xaxes(rangeslider=dict(visible=True, thickness=0.05), row=4, col=1)
+
+    return fig
+
+
+_PLOTLY_CONFIG = {"scrollZoom": True, "displaylogo": False, "doubleClick": "reset"}
+
+
+def _ensure_plotlyjs(directory: Path) -> None:
+    """Copy ``plotly.min.js`` next to an HTML figure so the page works offline."""
+    dest = directory / "plotly.min.js"
+    if dest.is_file():
+        return
+    import plotly.graph_objects as go
+
+    scratch = directory / "_plotly_js.html"
+    go.Figure().write_html(scratch, include_plotlyjs="directory", full_html=True)
+    scratch.unlink(missing_ok=True)
+
+
+def plot_euler_interactive(trial_name: str, out: Path | None = None,
+                           trial=None, data: dict | None = None,
+                           max_points: int | None = None, **kwargs) -> Path:
+    """Write a zoomable HTML figure of the same Euler traces as the PNG.
+
+    The four panels share a time axis. In a browser, drag a rectangle to zoom,
+    scroll to zoom further, and double-click to reset. ``data`` may be the dict
+    already returned by :func:`plot_euler_tracking`, so the filters are not run
+    a second time. ``max_points`` decimates for display; the default keeps
+    every sample so a zoom shows the recording rate.
+    """
+    if data is None:
+        data = euler_tracking(trial_name, trial=trial, **kwargs)
+    name = getattr(data["trial"], "name", trial_name)
+    fig = _euler_figure(data, name, max_points=max_points)
+    stem = name.split("_")[0]
+    stem = stem if stem.isdigit() else name
+    out = out or figures_dir() / f"euler_{stem}.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_plotlyjs(out.parent)
+    fig.write_html(
+        out,
+        include_plotlyjs=False,
+        full_html=True,
+        config=_PLOTLY_CONFIG,
+    )
+    # write_html(include_plotlyjs=False) omits the script tag entirely.
+    text = out.read_text()
+    if "plotly.min.js" not in text:
+        text = text.replace(
+            "</head>",
+            '    <script src="plotly.min.js"></script>\n</head>',
+            1,
+        )
+        out.write_text(text)
+    return out
+
+
+def plot_euler_dropdown(entries: list[tuple[str, dict]], out: Path) -> Path:
+    """Write one HTML page whose dropdown switches the Euler figure.
+
+    ``entries`` is ``(label, data)`` in menu order. ``data`` is an
+    :func:`euler_tracking` result. Choosing a label replaces the figure; zoom
+    works the same way as in :func:`plot_euler_interactive`.
+    """
+    import json
+
+    import plotly.io as pio
+
+    if not entries:
+        raise ValueError("plot_euler_dropdown needs at least one sequence")
+    payload = {
+        label: json.loads(pio.to_json(_euler_figure(data, label), validate=False))
+        for label, data in entries
+    }
+    blob = json.dumps(payload).replace("<", "\\u003c")
+    labels = [label for label, _ in entries]
+    options = "\n".join(
+        f'      <option value="{label}">{label}</option>' for label in labels
+    )
+    page = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Euler tracking</title>
+  <script src="plotly.min.js"></script>
+  <style>
+    body {{ margin: 0; font-family: sans-serif; }}
+    .bar {{ padding: 10px 16px 0; font-size: 15px; }}
+    select {{ font-size: 15px; margin-left: 8px; }}
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <label for="seq">Sequence</label>
+    <select id="seq">
+{options}
+    </select>
+  </div>
+  <div id="plot"></div>
+  <script id="euler-figures" type="application/json">{blob}</script>
+  <script>
+    const figures = JSON.parse(document.getElementById("euler-figures").textContent);
+    const select = document.getElementById("seq");
+    const config = {{scrollZoom: true, displaylogo: false, doubleClick: "reset"}};
+    function show(name) {{
+      const fig = figures[name];
+      Plotly.react("plot", fig.data, fig.layout, config);
+    }}
+    select.addEventListener("change", () => show(select.value));
+    show(select.value);
+  </script>
+</body>
+</html>
+"""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_plotlyjs(out.parent)
+    out.write_text(page)
+    return out
 
 
 def plot_group_errors(tags: list[str], out: Path | None = None,

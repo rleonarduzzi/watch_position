@@ -14,7 +14,11 @@ import numpy as np
 import pandas as pd
 
 from wattitude.data import vicon
-from wattitude.eval.report import figures_dir, plot_euler_tracking
+from wattitude.eval.report import (
+    figures_dir,
+    plot_euler_dropdown,
+    plot_euler_tracking,
+)
 from wattitude.quaternion import euler_gimbal_risk
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,9 +82,18 @@ def main() -> None:
         "ESKF `sigma_acc=200` with the closed-form transition "
         "(`exact_phi=True`, the library default), VQF `tauAcc=3`.\n"
     )
+    A(
+        "All seven traces, at every sample, are in "
+        "[`reports/figures/vicon_euler.html`](reports/figures/vicon_euler.html). "
+        "Choose the sequence from the dropdown. Drag a rectangle to zoom, or "
+        "scroll the wheel. The four panels share the time axis, a slider under "
+        "the error panel sets the window, and a double-click restores the full "
+        "prefix. The PNG under each heading is decimated.\n"
+    )
     A("## Per-sequence traces\n")
 
     rows = []
+    plotted: list[tuple[str, dict]] = []
     for name in vicon.sequence_names(vicon.short_root()):
         trial = vicon.load_trial(name, root=vicon.short_root())
         path, data = plot_euler_tracking(
@@ -91,6 +104,7 @@ def main() -> None:
             max_points=8000,
             out=FIGURES / f"vicon_euler_{name}.png",
         )
+        plotted.append((name, data))
         n_move = int(trial.movement.sum())
         factor = max(1, int(np.ceil(n_move / 8000)))
         fix = "IMU x,y reversed to match the optical body" if trial.axis_fix == "rz180" else "IMU axes already match the optical body"
@@ -120,6 +134,11 @@ def main() -> None:
             f"ESKF incl {incl['ESKF incl']:6.2f}  VQF incl {incl['VQF incl']:6.2f}  "
             f"drift {incl['ESKF drift']:+7.1f} / {incl['VQF drift']:+7.1f} deg/min"
         )
+
+    html_path = plot_euler_dropdown(plotted, FIGURES / "vicon_euler.html")
+    for stale in FIGURES.glob("vicon_euler_v3_*.html"):
+        stale.unlink()
+    print(f"wrote {html_path}")
 
     table = pd.DataFrame(rows).set_index("sequence")
     show = table.drop(columns=["duration_s"])

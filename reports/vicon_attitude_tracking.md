@@ -14,6 +14,8 @@ The figure is the same one used for BROAD in `attitude_tracking.md`. Euler angle
 
 Parameters are the BROAD trial-agnostic pair, carried over as-is: ESKF `sigma_acc=200` with the closed-form transition (`exact_phi=True`, the library default), VQF `tauAcc=3`.
 
+All seven traces, at every sample, are in [`reports/figures/vicon_euler.html`](reports/figures/vicon_euler.html). Choose the sequence from the dropdown. Drag a rectangle to zoom, or scroll the wheel. The four panels share the time axis, a slider under the error panel sets the window, and a double-click restores the full prefix. The PNG under each heading is decimated.
+
 ## Per-sequence traces
 
 ### v3_01
