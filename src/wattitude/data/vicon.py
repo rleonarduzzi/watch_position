@@ -11,8 +11,8 @@ The optical quaternion uses the same z-up, body-to-world convention as
 :class:`~wattitude.eskf.AdaptiveESKF`.  On some recordings the IMU itself is
 yawed 180 degrees relative to that body frame, which reverses its x and y axes
 and leaves z alone.  :func:`load_trial` detects that mounting from the
-gyroscope and corrects it, so the arrays it returns are expressed in the
-optical body frame.  The files on disk are left untouched.
+gyroscope and corrects it in memory.  :func:`correct_dataset` writes the same
+correction back into the CSV files.
 
 The full recordings run for about ten to thirty minutes.  :func:`write_prefix_dataset`
 copies a short prefix of each one into ``data/imu_vicon_joint_v10_short`` for
@@ -38,6 +38,8 @@ __all__ = [
     "sequence_names",
     "needs_rz180",
     "load_trial",
+    "correct_csv",
+    "correct_dataset",
     "write_prefix_dataset",
 ]
 
@@ -166,6 +168,80 @@ def _read_csv(path: Path) -> np.ndarray:
     if data.ndim == 1:
         data = data.reshape(1, -1)
     return data
+
+
+# Accelerometer and gyroscope x, y.  z, position and the optical quaternion stay.
+_FLIP_COLUMNS = (0, 1, 3, 4)
+
+
+def _negate_field(field: str) -> str:
+    """Flip the sign of one CSV number without touching its other digits."""
+    field = field.strip()
+    if not field:
+        raise ValueError("empty field in a column that would be sign-flipped")
+    if field[0] == "-":
+        return field[1:]
+    if field[0] == "+":
+        return "-" + field[1:]
+    return "-" + field
+
+
+def _rewrite_xy_flipped(path: Path) -> None:
+    """Replace ``path`` with a copy whose IMU x and y columns have flipped sign."""
+    rewritten: list[str] = []
+    with open(path) as fin:
+        header = fin.readline()
+        if not header.endswith("\n"):
+            header += "\n"
+        rewritten.append(header)
+        for lineno, line in enumerate(fin, start=2):
+            body = line[:-1] if line.endswith("\n") else line
+            if not body.strip():
+                continue
+            fields = body.split(",")
+            if len(fields) != len(COLUMNS):
+                raise ValueError(
+                    f"{path}:{lineno} has {len(fields)} columns, expected {len(COLUMNS)}"
+                )
+            for index in _FLIP_COLUMNS:
+                fields[index] = _negate_field(fields[index])
+            rewritten.append(",".join(fields) + "\n")
+
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text("".join(rewritten))
+    tmp.replace(path)
+
+
+def correct_csv(path: Path | str, dry_run: bool = False, rate: float = RATE_HZ) -> str:
+    """Reverse IMU x and y in one CSV when they oppose the optical body.
+
+    Returns ``"rz180"`` when the file needed the reversal and ``"identity"``
+    when it already agreed.  With ``dry_run`` the file is left unchanged either
+    way.  A second call on a file that was just corrected returns ``"identity"``.
+    """
+    path = Path(path)
+    data = _read_csv(path)
+    gyr = np.ascontiguousarray(data[:, 3:6], dtype=float)
+    quat = np.ascontiguousarray(data[:, [12, 9, 10, 11]], dtype=float)
+    quat /= np.linalg.norm(quat, axis=1, keepdims=True)
+    if not needs_rz180(gyr, quat, rate):
+        return "identity"
+    if not dry_run:
+        _rewrite_xy_flipped(path)
+    return "rz180"
+
+
+def correct_dataset(
+    root: Path | str, dry_run: bool = False, rate: float = RATE_HZ
+) -> list[tuple[Path, str]]:
+    """Apply :func:`correct_csv` to every ``*.csv`` directly inside ``root``."""
+    root = Path(root)
+    if not root.is_dir():
+        raise FileNotFoundError(f"dataset folder not found: {root}")
+    paths = sorted(p for p in root.glob("*.csv") if p.is_file())
+    if not paths:
+        raise FileNotFoundError(f"no csv files in {root}")
+    return [(path, correct_csv(path, dry_run=dry_run, rate=rate)) for path in paths]
 
 
 def load_trial(
