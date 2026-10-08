@@ -1,6 +1,7 @@
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
-\usepackage{amsmath,amssymb,booktabs}
+\usepackage{amsmath,amssymb,booktabs,graphicx,float}
+\graphicspath{{figures/}{reports/figures/}}
 
 \begin{document}
 \begin{center}
@@ -28,7 +29,17 @@ On \texttt{v3\_02}, \texttt{v3\_12}, \texttt{v3\_14} and \texttt{v3\_15} its $x$
 \section{Tests}
 Both tests use the first $120\,\mathrm{s}$ of each recording, at $\Delta t = 0.01\,\mathrm{s}$.
 
-The optical body rate is the right-trivialised increment of $q$,
+The optical body rate is the right-trivialised increment of $q$.
+Over one sample the attitude advances by a body rotation,
+\[
+  q_{k+1} = q_k\otimes\exp(\boldsymbol{\omega}_k\Delta t),
+\]
+where $\exp$ sends the rotation vector $\boldsymbol{\omega}_k\Delta t$ to the corresponding unit quaternion.
+Left-multiply by $q_k^{-1}$. Associativity and $q_k^{-1}\otimes q_k = 1$ isolate the increment,
+\[
+  q_k^{-1}\otimes q_{k+1} = \exp(\boldsymbol{\omega}_k\Delta t).
+\]
+$\mathrm{Log}$ inverts $\exp$ for a rotation of angle less than $\pi$, so
 \begin{equation}
   \boldsymbol{\omega}_k
   = \frac{1}{\Delta t}\,\mathrm{Log}\bigl(q_k^{-1}\otimes q_{k+1}\bigr) .
@@ -47,6 +58,22 @@ With $c_i = \mathrm{corr}(\tilde\omega_i, \omega_i)$ the per-axis correlation, r
   \label{eq:test}
 \end{equation}
 
+On a sequence whose axes agree the two rates overlie.
+On a reversed sequence they keep the same shape, with opposite sign on $x$ and $y$ and the same sign on $z$.
+The stretches are a few seconds of large motion.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{vicon_axis_omega_v3_13}
+\caption{Optical rate $\omega_i$ and gyroscope midpoint $\tilde{\omega}_i$ on \texttt{v3\_13}, whose axes agree. The two traces overlie.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{vicon_axis_omega_v3_12}
+\caption{The same comparison on \texttt{v3\_12}. The shapes match, with $x$ and $y$ inverted and $z$ unchanged.}
+\end{figure}
+
 The second test does not use the gyroscope.
 From $20\,\mathrm{s}$ to $110\,\mathrm{s}$, the lab specific force is a 9-sample moving average of
 \begin{equation}
@@ -61,33 +88,47 @@ and the accelerometer is rotated by the same quaternion under each mounting,
   \qquad R \in \{I,\, R_z(\pi)\} .
   \label{eq:acc}
 \end{equation}
-The columns below are $\mathrm{corr}(\mathbf{a}^{\mathrm{lab}}, \mathbf{f})$, averaged over the three axes, and the VQF inclination RMSE in degrees after the constant heading offset is removed.
+With $R = I$, the same two stretches give the accelerometer against the specific force.
+On \texttt{v3\_13} the accelerometer follows $f$.
+On \texttt{v3\_12} the traces run against each other, and the lab vertical of the accelerometer sits near $-g$ while $f_z$ sits near $+g$.
+A pure sign flip of lab $x$ and $y$ is not what $R(q)$ does to a body yaw, so those two components are not mirrors of $f$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{vicon_axis_acc_v3_13}
+\caption{Specific force $f_k$ and lab accelerometer $a^{\mathrm{lab}}_k$ at $R = I$ on \texttt{v3\_13}, the same stretch as Figure~1. The accelerometer follows $f$.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{vicon_axis_acc_v3_12}
+\caption{The same comparison on \texttt{v3\_12}, the stretch of Figure~2.
+The traces run against each other, and the lab vertical of the accelerometer sits near $-g$ while $f_z$ sits near $+g$.}
+\end{figure}
+
+The columns below are $\mathrm{corr}(\mathbf{a}^{\mathrm{lab}}, \mathbf{f})$, averaged over the three axes.
 
 \begin{center}
-  \footnotesize
-  \begin{tabular}{lrrrrrrr}
+  \begin{tabular}{lrrrrr}
     \toprule
-    & \multicolumn{3}{c}{gyroscope, \eqref{eq:omega}} & \multicolumn{2}{c}{accelerometer, \eqref{eq:acc}} & \multicolumn{2}{c}{inclination} \\
-    \cmidrule(lr){2-4} \cmidrule(lr){5-6} \cmidrule(lr){7-8}
-    sequence & $c_x$ & $c_y$ & $c_z$ & $R=I$ & $R=R_z(\pi)$ & $R=I$ & $R=R_z(\pi)$ \\
+    & \multicolumn{3}{c}{gyroscope, \eqref{eq:omega}} & \multicolumn{2}{c}{accelerometer, \eqref{eq:acc}} \\
+    \cmidrule(lr){2-4} \cmidrule(lr){5-6}
+    sequence & $c_x$ & $c_y$ & $c_z$ & $R=I$ & $R=R_z(\pi)$ \\
     \midrule
-    v3\_01 & $+0.51$ & $+0.45$ & $+0.88$ & $+0.89$ & $-0.79$ & $16.9$ & $150$ \\
-    v3\_02 & $-0.30$ & $-0.35$ & $+0.72$ & $-0.48$ & $+0.86$ & $143$  & $10.3$ \\
-    v3\_11 & $+0.45$ & $+0.60$ & $+0.78$ & $+0.65$ & $-0.47$ & $19.1$ & $148$ \\
-    v3\_12 & $-0.60$ & $-0.70$ & $+0.87$ & $-0.57$ & $+0.95$ & $144$  & $5.9$ \\
-    v3\_13 & $+0.95$ & $+0.77$ & $+0.99$ & $+0.96$ & $-0.91$ & $5.4$  & $122$ \\
-    v3\_14 & $-0.46$ & $-0.69$ & $+0.71$ & $-0.34$ & $+0.80$ & $143$  & $7.0$ \\
-    v3\_15 & $-0.45$ & $-0.55$ & $+0.74$ & $-0.44$ & $+0.92$ & $132$  & $7.6$ \\
+    v3\_01 & $+0.51$ & $+0.45$ & $+0.88$ & $+0.89$ & $-0.79$ \\
+    v3\_02 & $-0.30$ & $-0.35$ & $+0.72$ & $-0.48$ & $+0.86$ \\
+    v3\_11 & $+0.45$ & $+0.60$ & $+0.78$ & $+0.65$ & $-0.47$ \\
+    v3\_12 & $-0.60$ & $-0.70$ & $+0.87$ & $-0.57$ & $+0.95$ \\
+    v3\_13 & $+0.95$ & $+0.77$ & $+0.99$ & $+0.96$ & $-0.91$ \\
+    v3\_14 & $-0.46$ & $-0.69$ & $+0.71$ & $-0.34$ & $+0.80$ \\
+    v3\_15 & $-0.45$ & $-0.55$ & $+0.74$ & $-0.44$ & $+0.92$ \\
     \bottomrule
   \end{tabular}
 \end{center}
-\noindent The larger accelerometer correlation, and the smaller inclination, select the same $R$ as \eqref{eq:test}.
+\noindent The larger accelerometer correlation selects the same $R$ as \eqref{eq:test}.
 
 Here $c_z$ is positive on all seven sequences ($+0.71$ to $+0.99$), so the vertical axes already agree.
 The matching horizontal signs bring the position residual down to about $1.2$--$1.8\,\mathrm{m/s^2}$ on the four reversed sequences; the opposite signs leave about $20$--$27\,\mathrm{m/s^2}$.
-Inclination with the wrong mounting is $122^\circ$--$150^\circ$, and $5^\circ$--$19^\circ$ with the matching one.
-A lab yaw $q_z(\psi)\otimes q$ does not change inclination.
-A body yaw $q\otimes q_z(\pi)$ does, once the object tilts, which is why removing the heading offset does not hide this mounting.
 
 \section{Correction}
 When \eqref{eq:test} holds, the measurements are mapped into the optical body and the pose is left as recorded:
@@ -102,5 +143,45 @@ When \eqref{eq:test} holds, the measurements are mapped into the optical body an
 \texttt{load\_trial} applies \eqref{eq:fix} in memory.
 \texttt{scripts/fix\_vicon\_axes.py} writes the same sign flips into the CSV.
 A file that already satisfies $c_x + c_y \ge 0$ is not rewritten.
+
+\section{Effect of the correction}
+The two tests fix the mounting from the gyroscope and the accelerometer alone.
+To see what the horizontal inversion does to an attitude error, the same prefixes are given to an estimator, once with the axes as recorded and once after \eqref{eq:fix}.
+The estimator is VQF, in 6-axis mode with $\tau_{\mathrm{acc}}=3$, the value fixed on BROAD and not retuned here.
+It was selected because it does not depend on the filter derived in this report, so a change in its error is evidence about the axes.
+
+The score is the inclination.
+VQF has no magnetometer, so its heading differs from the optical heading by an arbitrary constant and a slow drift, and the total rotation error folds that unobservable part into the number.
+Inclination does not.
+The lab error quaternion is $\hat{q}\otimes q^{-1} = (w,x,y,z)$, and
+\begin{equation}
+  \delta = 2\arccos\sqrt{w^{2}+z^{2}}
+  \label{eq:incl}
+\end{equation}
+is the angle between the upward lab axis and the direction $R(\hat{q}\otimes q^{-1})$ assigns to it.
+A heading is a rotation about that axis, and for a pure heading $\delta = 0$.
+A lab yaw $q_z(\psi)\otimes\hat{q}$ mixes $w$ with $z$ and $x$ with $y$, so it leaves $\delta$ unchanged, and removing the best constant heading offset does not alter the score.
+The inversion is a body yaw $\hat{q}\otimes q_z(\pi)$.
+Once the object tilts, that yaw is no longer a rotation about the lab vertical, and $\delta$ moves, which is why the heading alignment does not hide the wrong mounting.
+
+The table is the RMSE of $\delta$ over the first $120\,\mathrm{s}$, in degrees.
+
+\begin{center}
+  \begin{tabular}{lrr}
+    \toprule
+    sequence & $R=I$ & $R=R_z(\pi)$ \\
+    \midrule
+    v3\_01 & $16.9$ & $150$ \\
+    v3\_02 & $143$  & $10.3$ \\
+    v3\_11 & $19.1$ & $148$ \\
+    v3\_12 & $144$  & $5.9$ \\
+    v3\_13 & $5.4$  & $122$ \\
+    v3\_14 & $143$  & $7.0$ \\
+    v3\_15 & $132$  & $7.6$ \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+\noindent The smaller value selects the same $R$ as \eqref{eq:test}.
+With the wrong mounting the RMSE is $122^\circ$--$150^\circ$; with the matching one it is $5^\circ$--$19^\circ$.
 
 \end{document}
