@@ -34,6 +34,8 @@ __all__ = [
     "plot_euler_tracking",
     "plot_euler_interactive",
     "plot_euler_dropdown",
+    "quat_tracking",
+    "plot_quat_dropdown",
     "plot_nominal_sweep",
     "plot_adaptation",
     "plot_group_errors",
@@ -557,38 +559,29 @@ def plot_euler_interactive(trial_name: str, out: Path | None = None,
     return out
 
 
-def plot_euler_dropdown(entries: list[tuple[str, dict]], out: Path) -> Path:
-    """Write one HTML page whose dropdown switches the Euler figure.
-
-    ``entries`` is ``(label, data)`` in menu order. ``data`` is an
-    :func:`euler_tracking` result. Choosing a label replaces the figure; zoom
-    works the same way as in :func:`plot_euler_interactive`.
-    """
+def _write_dropdown_page(payload: dict[str, dict], out: Path, title: str,
+                         note: str = "") -> Path:
+    """One HTML page; the menu replaces the Plotly figure."""
     import json
 
-    import plotly.io as pio
-
-    if not entries:
-        raise ValueError("plot_euler_dropdown needs at least one sequence")
-    payload = {
-        label: json.loads(pio.to_json(_euler_figure(data, label), validate=False))
-        for label, data in entries
-    }
+    if not payload:
+        raise ValueError("dropdown page needs at least one figure")
     blob = json.dumps(payload).replace("<", "\\u003c")
-    labels = [label for label, _ in entries]
     options = "\n".join(
-        f'      <option value="{label}">{label}</option>' for label in labels
+        f'      <option value="{label}">{label}</option>' for label in payload
     )
+    note_html = f'\n    <span class="note">{note}</span>' if note else ""
     page = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Euler tracking</title>
+  <title>{title}</title>
   <script src="plotly.min.js"></script>
   <style>
     body {{ margin: 0; font-family: sans-serif; }}
     .bar {{ padding: 10px 16px 0; font-size: 15px; }}
     select {{ font-size: 15px; margin-left: 8px; }}
+    .note {{ margin-left: 16px; color: #444; }}
   </style>
 </head>
 <body>
@@ -596,7 +589,7 @@ def plot_euler_dropdown(entries: list[tuple[str, dict]], out: Path) -> Path:
     <label for="seq">Sequence</label>
     <select id="seq">
 {options}
-    </select>
+    </select>{note_html}
   </div>
   <div id="plot"></div>
   <script id="euler-figures" type="application/json">{blob}</script>
@@ -618,6 +611,196 @@ def plot_euler_dropdown(entries: list[tuple[str, dict]], out: Path) -> Path:
     _ensure_plotlyjs(out.parent)
     out.write_text(page)
     return out
+
+
+def _figures_payload(figures: list[tuple[str, object]]) -> dict[str, dict]:
+    import json
+
+    import plotly.io as pio
+
+    return {
+        label: json.loads(pio.to_json(fig, validate=False))
+        for label, fig in figures
+    }
+
+
+def plot_euler_dropdown(entries: list[tuple[str, dict]], out: Path) -> Path:
+    """Write one HTML page whose dropdown switches the Euler figure.
+
+    ``entries`` is ``(label, data)`` in menu order. ``data`` is an
+    :func:`euler_tracking` result. Choosing a label replaces the figure; zoom
+    works the same way as in :func:`plot_euler_interactive`.
+    """
+    if not entries:
+        raise ValueError("plot_euler_dropdown needs at least one sequence")
+    payload = _figures_payload(
+        [(label, _euler_figure(data, label)) for label, data in entries]
+    )
+    return _write_dropdown_page(payload, out, "Euler tracking")
+
+
+def _continuous_quaternions(q: np.ndarray) -> np.ndarray:
+    """Flip signs so successive samples stay in one hemisphere.
+
+    ``q`` and ``-q`` are the same rotation. The first sample is taken with a
+    non-negative scalar part, and each later sample is flipped when its dot
+    product with the previous sample is negative.
+    """
+    q = np.array(q, dtype=float, copy=True)
+    if len(q) == 0:
+        return q
+    if np.isfinite(q[0, 0]) and q[0, 0] < 0.0:
+        q[0] *= -1.0
+    dots = np.sum(q[1:] * q[:-1], axis=1)
+    steps = np.ones(len(q))
+    steps[1:] = np.where(dots < 0.0, -1.0, 1.0)
+    return q * np.cumprod(steps)[:, None]
+
+
+def _match_quaternion_sign(reference: np.ndarray, other: np.ndarray) -> np.ndarray:
+    """Flip ``other`` samplewise onto the hemisphere of ``reference``."""
+    dots = np.sum(other * reference, axis=1)
+    sign = np.where(dots < 0.0, -1.0, 1.0)
+    return other * sign[:, None]
+
+
+def quat_tracking(trial_name: str, eskf_params: dict | None = None,
+                  vqf_params: dict | None = None, trial=None) -> dict:
+    """Ground-truth and estimated attitude for one trial, as quaternion components.
+
+    The heading alignment is the same one :func:`euler_tracking` applies. Signs
+    are then chosen so the optical quaternion is continuous in time and each
+    estimate lies in that hemisphere: ``q`` and ``-q`` would otherwise draw a
+    false jump in every component.
+    """
+    if trial is None:
+        trial = broad.load_trial(trial_name)
+    else:
+        trial_name = getattr(trial, "name", trial_name)
+    window = init_window_for(trial)
+    movement = trial.movement
+    truth = _continuous_quaternions(trial.opt_quat)
+
+    series = {}
+    for name, params in (
+        ("eskf", eskf_params or {"sigma_acc": 200.0}),
+        ("vqf", vqf_params or {"tauAcc": 3.0}),
+    ):
+        quats = ESTIMATORS[name](
+            trial.gyr, trial.acc, trial.rate, init_slice=window, **params
+        )
+        offset = optimal_heading_offset(quats, trial.opt_quat, movement)
+        aligned = apply_heading_offset(quats, offset)
+        series[name] = {
+            "quat": _match_quaternion_sign(truth, aligned),
+            "errors": orientation_errors(
+                quats, trial.opt_quat, movement, trial.rate, align_heading=True
+            ),
+            "total_series": np.rad2deg(
+                error_series(quats, trial.opt_quat, movement)["total"]
+            ),
+            "heading_offset_deg": float(np.rad2deg(offset)),
+            "params": params,
+        }
+
+    return {"trial": trial, "truth": truth, "series": series}
+
+
+def _quat_figure(data: dict, trial_name: str | None = None,
+                 max_points: int | None = None):
+    """Plotly figure of scalar-first quaternion components."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    trial = data["trial"]
+    trial_name = trial_name or getattr(trial, "name", "trial")
+    t = np.arange(len(trial)) / trial.rate
+    movement = np.asarray(trial.movement, dtype=bool)
+    lo = int(np.argmax(movement))
+    hi = int(len(movement) - np.argmax(movement[::-1]))
+    view = slice(lo, hi)
+    step = _decimate(hi - lo, max_points) if max_points else slice(None)
+
+    tv = t[view][step]
+    truth = data["truth"][view][step]
+    colors = {"eskf": "#2ca02c", "vqf": "#9467bd"}
+    labels = {"eskf": "ESKF (this filter)", "vqf": "VQF"}
+
+    fig = make_subplots(
+        rows=5, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+    )
+    hover = "%{y:.3f}<extra>%{fullData.name}</extra>"
+    for i, component in enumerate(("w", "x", "y", "z")):
+        row = i + 1
+        fig.add_trace(go.Scatter(
+            x=tv, y=truth[:, i], name="optical ground truth",
+            legendgroup="truth", showlegend=(i == 0),
+            line=dict(color="black", width=1.6), hovertemplate=hover,
+        ), row=row, col=1)
+        for key in ("eskf", "vqf"):
+            quat = data["series"][key]["quat"][view][step]
+            fig.add_trace(go.Scatter(
+                x=tv, y=quat[:, i], name=labels[key],
+                legendgroup=key, showlegend=(i == 0),
+                line=dict(color=colors[key], width=1.2), hovertemplate=hover,
+            ), row=row, col=1)
+        fig.update_yaxes(title_text=component, row=row, col=1)
+
+    hover_err = "%{y:.1f}°<extra>%{fullData.name}</extra>"
+    for key in ("eskf", "vqf"):
+        err = data["series"][key]["total_series"][view][step]
+        fig.add_trace(go.Scatter(
+            x=tv, y=err, name=labels[key], legendgroup=key, showlegend=False,
+            line=dict(color=colors[key], width=1.2), hovertemplate=hover_err,
+        ), row=5, col=1)
+    fig.update_yaxes(title_text="total error (deg)", row=5, col=1)
+    fig.update_xaxes(title_text="time (s)", row=5, col=1)
+
+    incl = {k: v["errors"].inclination_rmse_deg for k, v in data["series"].items()}
+    fig.update_layout(
+        height=1180,
+        title=dict(
+            text=(
+                f"{trial_name} -- w, x, y, z -- inclination RMSE: "
+                f"ESKF {incl['eskf']:.2f}°, VQF {incl['vqf']:.2f}°"
+            ),
+            x=0.5,
+        ),
+        hovermode="x unified",
+        dragmode="zoom",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0),
+        margin=dict(l=70, r=24, t=100, b=48),
+        template="plotly_white",
+    )
+    fig.update_xaxes(
+        showspikes=True, spikemode="across", spikethickness=1,
+        spikedash="dot", spikecolor="gray",
+    )
+    fig.update_xaxes(rangeslider=dict(visible=True, thickness=0.04), row=5, col=1)
+    return fig
+
+
+def plot_quat_dropdown(entries: list[tuple[str, dict]], out: Path) -> Path:
+    """Write one HTML page whose dropdown switches the quaternion figure.
+
+    ``entries`` is ``(label, data)`` in menu order. ``data`` is a
+    :func:`quat_tracking` result.
+    """
+    if not entries:
+        raise ValueError("plot_quat_dropdown needs at least one sequence")
+    payload = _figures_payload(
+        [(label, _quat_figure(data, label)) for label, data in entries]
+    )
+    return _write_dropdown_page(
+        payload,
+        out,
+        "Quaternion tracking",
+        note=(
+            "Scalar-first w, x, y, z. The constant heading offset is removed, "
+            "and each sample uses the sign closest to the optical quaternion. "
+            "The bottom panel is the total orientation error after that alignment."
+        ),
+    )
 
 
 def plot_group_errors(tags: list[str], out: Path | None = None,

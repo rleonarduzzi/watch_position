@@ -10,8 +10,10 @@ data/broad/
 
 # Benchmark intermediates, regenerable with scripts/run_benchmark.py.  The
 # figures under reports/figures/ are committed instead, because the reports
-# embed them.
+# embed them.  The zoomable Plotly pages are the exception: regenerate them
+# with scripts/run_vicon_attitude.py and scripts/plot_vicon_quaternions.py.
 reports/cache/
+reports/figures/*.html
 
 # The paper itself, retrievable from its DOI.
 *.pdf
