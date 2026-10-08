@@ -34,4 +34,5 @@ addopts = "-q"
 markers = [
     "slow: tests that take more than a few seconds",
     "broad: tests that require the BROAD dataset to be downloaded",
+    "vicon: tests that require data/imu_vicon_joint_v10",
 ]

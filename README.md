@@ -177,3 +177,20 @@ python scripts/make_report.py        # tables and figures
 ```
 
 Set `BROAD_ROOT` to point the loader somewhere else.
+
+## IMU / Vicon prefixes
+
+`data/imu_vicon_joint_v10` holds the long wrist recordings (100 Hz IMU plus
+Vicon position and attitude). The first evaluation uses a two-minute prefix of
+each sequence:
+
+```bash
+python scripts/run_vicon_attitude.py
+```
+
+That writes `data/imu_vicon_joint_v10_short`, the Euler figures under
+`reports/figures/vicon_euler_*.png`, and `reports/vicon_attitude_tracking.md`.
+The filter and VQF run at the same parameters as the BROAD attitude report.
+Sequences whose IMU is yawed 180° relative to the optical body are detected
+and corrected in the loader; the CSV files themselves are not rewritten.
+`reports/vicon_axis_mounting.md` records the evidence.

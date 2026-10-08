@@ -258,7 +258,7 @@ def _decimate(n: int, limit: int) -> slice:
 
 
 def euler_tracking(trial_name: str, eskf_params: dict | None = None,
-                   vqf_params: dict | None = None) -> dict:
+                   vqf_params: dict | None = None, trial=None) -> dict:
     """Ground-truth and estimated attitude for one trial, as Euler angles.
 
     Both estimators are magnetometer-free, so their heading is expressed in
@@ -266,8 +266,15 @@ def euler_tracking(trial_name: str, eskf_params: dict | None = None,
     therefore has its optimal constant heading offset removed first -- the same
     alignment the error metric applies -- otherwise the yaw panel would show a
     meaningless constant difference and nothing else.
+
+    ``trial`` overrides the BROAD lookup.  Any object with ``gyr``, ``acc``,
+    ``opt_quat``, ``movement``, ``rate`` and ``name`` is accepted, which is how
+    the Vicon sequences are plotted with the same figure.
     """
-    trial = broad.load_trial(trial_name)
+    if trial is None:
+        trial = broad.load_trial(trial_name)
+    else:
+        trial_name = getattr(trial, "name", trial_name)
     window = init_window_for(trial)
     movement = trial.movement
 
@@ -303,20 +310,22 @@ def euler_tracking(trial_name: str, eskf_params: dict | None = None,
 
 def plot_euler_tracking(trial_name: str, out: Path | None = None,
                         max_points: int = 6000, zoom: tuple[float, float] | None = None,
-                        **kwargs):
+                        trial=None, **kwargs):
     """Plot roll, pitch and yaw of both estimates against the optical reference.
 
     ``zoom`` restricts the view to a ``(start, stop)`` time range in seconds,
     which is the only way to see the sample-level behaviour on a recording of a
-    few hundred thousand samples.
+    few hundred thousand samples.  Pass ``trial`` to plot a recording that is
+    not part of BROAD; see :func:`euler_tracking`.
     """
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    data = euler_tracking(trial_name, **kwargs)
+    data = euler_tracking(trial_name, trial=trial, **kwargs)
     trial = data["trial"]
+    trial_name = getattr(trial, "name", trial_name)
     t = np.arange(len(trial)) / trial.rate
 
     # Restrict to the annotated movement phase: the long rest periods either
@@ -374,7 +383,11 @@ def plot_euler_tracking(trial_name: str, out: Path | None = None,
     fig.tight_layout()
 
     suffix = "" if zoom is None else "_zoom"
-    out = out or figures_dir() / f"euler_{trial_name.split('_')[0]}{suffix}.png"
+    token = trial_name.split("_")[0]
+    # BROAD trials are numbered (``01_...``).  Other names must keep the full
+    # stem or every sequence in a family overwrites one file.
+    stem = token if token.isdigit() else trial_name
+    out = out or figures_dir() / f"euler_{stem}{suffix}.png"
     fig.savefig(out, dpi=135)
     plt.close(fig)
     return out, data
