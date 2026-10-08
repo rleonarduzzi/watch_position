@@ -193,4 +193,4 @@ That writes `data/imu_vicon_joint_v10_short`, the Euler figures under
 The filter and VQF run at the same parameters as the BROAD attitude report.
 Sequences whose IMU is yawed 180° relative to the optical body are detected
 and corrected in the loader; the CSV files themselves are not rewritten.
-`reports/vicon_axis_mounting.md` records the evidence.
+`reports/vicon_axis_mounting.tex` records the evidence.

@@ -59,7 +59,9 @@ def main() -> None:
         "gyroscope with the optical angular rate and reverses x and y before "
         "either estimator runs. The files in the short dataset are verbatim "
         "prefixes; the correction is applied in memory. Sequences marked "
-        "`rz180` below are the ones that needed it.\n"
+        "`rz180` below are the ones that needed it. The evidence, the "
+        "detection, and what the optical body is are in "
+        "`vicon_axis_mounting.tex`.\n"
     )
     A("## How to read these plots\n")
     A(

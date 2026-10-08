@@ -6,7 +6,7 @@ Roll, pitch and yaw of the adaptive ESKF and of VQF against the Vicon quaternion
 
 Each CSV holds accelerometer specific force in m/s², gyroscope angular rate in rad/s, optical position in metres, and an optical attitude quaternion stored scalar-last (`x, y, z, w`). The quaternion is body-to-world with z up, and the accelerometer reads about `+g` on the upward axis at rest, which is the filter's convention. There is no magnetometer and no separate movement annotation, so the errors below are over every sample of the two-minute prefix.
 
-On part of the recordings the IMU is yawed 180° relative to the optical body: its x and y axes point the opposite way and z agrees. That is a mounting difference, not an attitude the filter should have to discover. `load_trial` detects it by comparing the sign of the gyroscope with the optical angular rate and reverses x and y before either estimator runs. The files in the short dataset are verbatim prefixes; the correction is applied in memory. Sequences marked `rz180` below are the ones that needed it. The evidence, the detection, and what the optical body is are in `vicon_axis_mounting.md`.
+On part of the recordings the IMU is yawed 180° relative to the optical body: its x and y axes point the opposite way and z agrees. That is a mounting difference, not an attitude the filter should have to discover. `load_trial` detects it by comparing the sign of the gyroscope with the optical angular rate and reverses x and y before either estimator runs. The files in the short dataset are verbatim prefixes; the correction is applied in memory. Sequences marked `rz180` below are the ones that needed it. The evidence, the detection, and what the optical body is are in `vicon_axis_mounting.tex`.
 
 ## How to read these plots
 

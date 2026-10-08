@@ -1,0 +1,106 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,booktabs}
+
+\begin{document}
+\begin{center}
+  {\Large\bfseries IMU $x,y$ opposed to the optical body}
+\end{center}
+\smallskip
+
+The optical body is the rigid body tracked by Vicon.
+Its lab position is $\mathbf{p}$ (\texttt{gt\_pos}) and its attitude is the Hamilton quaternion $q$ (\texttt{gt\_rot\_quat}, stored scalar last), body to world:
+\begin{equation}
+  \mathbf{v}_{\mathrm{lab}} = R(q)\,\mathbf{v}_{\mathrm{body}} .
+  \label{eq:body}
+\end{equation}
+Body $z$ is up. Body $x$ and $y$ are the other two axes of that Vicon definition.
+The IMU is a second frame on the same object.
+On every sequence its $z$ axis matches the optical $z$.
+On \texttt{v3\_02}, \texttt{v3\_12}, \texttt{v3\_14} and \texttt{v3\_15} its $x$ and $y$ axes point the opposite way, which is the mounting
+\begin{equation}
+  R_z(\pi) = \operatorname{diag}(-1,-1,+1),
+  \qquad
+  \mathbf{u}_{\mathrm{body}} = R_z(\pi)\,\mathbf{u}_{\mathrm{imu}} .
+  \label{eq:rz}
+\end{equation}
+
+\section{Tests}
+Both tests use the first $120\,\mathrm{s}$ of each recording, at $\Delta t = 0.01\,\mathrm{s}$.
+
+The optical body rate is the right-trivialised increment of $q$,
+\begin{equation}
+  \boldsymbol{\omega}_k
+  = \frac{1}{\Delta t}\,\mathrm{Log}\bigl(q_k^{-1}\otimes q_{k+1}\bigr) .
+  \label{eq:omega}
+\end{equation}
+It is compared with the gyroscope midpoint
+$\tilde{\boldsymbol{\omega}}_k = \tfrac12\bigl(\boldsymbol{\omega}^{\mathrm{imu}}_k + \boldsymbol{\omega}^{\mathrm{imu}}_{k+1}\bigr)$
+on samples with $\|\tilde{\boldsymbol{\omega}}\| > 0.5\,\mathrm{rad/s}$.
+With $c_i = \mathrm{corr}(\tilde\omega_i, \omega_i)$ the per-axis correlation, reverse the horizontal axes when the reversed signs agree better:
+\begin{equation}
+  \text{reverse } x,y
+  \iff
+  -c_x - c_y + c_z > c_x + c_y + c_z
+  \iff
+  c_x + c_y < 0 .
+  \label{eq:test}
+\end{equation}
+
+The second test does not use the gyroscope.
+From $20\,\mathrm{s}$ to $110\,\mathrm{s}$, the lab specific force is a 9-sample moving average of
+\begin{equation}
+  \mathbf{f}_k
+  = \frac{\mathbf{p}_{k+1} - 2\mathbf{p}_k + \mathbf{p}_{k-1}}{\Delta t^2}
+  + \begin{pmatrix} 0 \\ 0 \\ g \end{pmatrix},
+  \label{eq:force}
+\end{equation}
+and the accelerometer is rotated by the same quaternion under each mounting,
+\begin{equation}
+  \mathbf{a}^{\mathrm{lab}} = R(q)\,R\,\mathbf{a},
+  \qquad R \in \{I,\, R_z(\pi)\} .
+  \label{eq:acc}
+\end{equation}
+The columns below are $\mathrm{corr}(\mathbf{a}^{\mathrm{lab}}, \mathbf{f})$, averaged over the three axes, and the VQF inclination RMSE in degrees after the constant heading offset is removed.
+
+\begin{center}
+  \footnotesize
+  \begin{tabular}{lrrrrrrr}
+    \toprule
+    & \multicolumn{3}{c}{gyroscope, \eqref{eq:omega}} & \multicolumn{2}{c}{accelerometer, \eqref{eq:acc}} & \multicolumn{2}{c}{inclination} \\
+    \cmidrule(lr){2-4} \cmidrule(lr){5-6} \cmidrule(lr){7-8}
+    sequence & $c_x$ & $c_y$ & $c_z$ & $R=I$ & $R=R_z(\pi)$ & $R=I$ & $R=R_z(\pi)$ \\
+    \midrule
+    v3\_01 & $+0.51$ & $+0.45$ & $+0.88$ & $+0.89$ & $-0.79$ & $16.9$ & $150$ \\
+    v3\_02 & $-0.30$ & $-0.35$ & $+0.72$ & $-0.48$ & $+0.86$ & $143$  & $10.3$ \\
+    v3\_11 & $+0.45$ & $+0.60$ & $+0.78$ & $+0.65$ & $-0.47$ & $19.1$ & $148$ \\
+    v3\_12 & $-0.60$ & $-0.70$ & $+0.87$ & $-0.57$ & $+0.95$ & $144$  & $5.9$ \\
+    v3\_13 & $+0.95$ & $+0.77$ & $+0.99$ & $+0.96$ & $-0.91$ & $5.4$  & $122$ \\
+    v3\_14 & $-0.46$ & $-0.69$ & $+0.71$ & $-0.34$ & $+0.80$ & $143$  & $7.0$ \\
+    v3\_15 & $-0.45$ & $-0.55$ & $+0.74$ & $-0.44$ & $+0.92$ & $132$  & $7.6$ \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+\noindent The larger accelerometer correlation, and the smaller inclination, select the same $R$ as \eqref{eq:test}.
+
+Here $c_z$ is positive on all seven sequences ($+0.71$ to $+0.99$), so the vertical axes already agree.
+The matching horizontal signs bring the position residual down to about $1.2$--$1.8\,\mathrm{m/s^2}$ on the four reversed sequences; the opposite signs leave about $20$--$27\,\mathrm{m/s^2}$.
+Inclination with the wrong mounting is $122^\circ$--$150^\circ$, and $5^\circ$--$19^\circ$ with the matching one.
+A lab yaw $q_z(\psi)\otimes q$ does not change inclination.
+A body yaw $q\otimes q_z(\pi)$ does, once the object tilts, which is why removing the heading offset does not hide this mounting.
+
+\section{Correction}
+When \eqref{eq:test} holds, the measurements are mapped into the optical body and the pose is left as recorded:
+\begin{equation}
+  \mathbf{a} \leftarrow R_z(\pi)\,\mathbf{a},
+  \qquad
+  \boldsymbol{\omega} \leftarrow R_z(\pi)\,\boldsymbol{\omega},
+  \qquad
+  q \text{ and } \mathbf{p} \text{ unchanged}.
+  \label{eq:fix}
+\end{equation}
+\texttt{load\_trial} applies \eqref{eq:fix} in memory.
+\texttt{scripts/fix\_vicon\_axes.py} writes the same sign flips into the CSV.
+A file that already satisfies $c_x + c_y \ge 0$ is not rewritten.
+
+\end{document}
