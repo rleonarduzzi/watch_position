@@ -9,16 +9,23 @@
 \end{center}
 \smallskip
 
-The optical body is the rigid body tracked by Vicon.
-Its lab position is $\mathbf{p}$ (\texttt{gt\_pos}) and its attitude is the Hamilton quaternion $q$ (\texttt{gt\_rot\_quat}, stored scalar last), body to world:
+\section{Definitions}
+Denote with ``optical body'' the rigid body tracked by Vicon.
+Its position in the world frame of reference is $\mathbf{p}$ and its attitude is the quaternion
+$q$. The quaternion encodes a rotation $R(q)$ from body to world reference frames
 \begin{equation}
-  \mathbf{v}_{\mathrm{lab}} = R(q)\,\mathbf{v}_{\mathrm{body}} .
+  \mathbf{v}_{\mathrm{world}} = R(q)\,\mathbf{v}_{\mathrm{body}} .
   \label{eq:body}
 \end{equation}
-Body $z$ is up. Body $x$ and $y$ are the other two axes of that Vicon definition.
-The IMU is a second frame on the same object.
-On every sequence its $z$ axis matches the optical $z$.
-On \texttt{v3\_02}, \texttt{v3\_12}, \texttt{v3\_14} and \texttt{v3\_15} its $x$ and $y$ axes point the opposite way, which is the mounting
+The $z$ coordinate in the optical body frame is oriented upwards.
+
+The IMU is expressed in a second frame of reference on the same object.
+
+\section{Problem}
+The IMU frame of reference was assumed to coincide with the ``optical'' frame of reference.
+However, it was observed that while the IMU and optical $z$ axes match on all sequences, the $x$ and
+$y$ axes seem to point in opposite directions. On these sequences, this inversion can be fixed by a
+rotation of $\pi$ radians around the $z$ axis:
 \begin{equation}
   R_z(\pi) = \operatorname{diag}(-1,-1,+1),
   \qquad
@@ -26,29 +33,56 @@ On \texttt{v3\_02}, \texttt{v3\_12}, \texttt{v3\_14} and \texttt{v3\_15} its $x$
   \label{eq:rz}
 \end{equation}
 
-\section{Tests}
-Both tests use the first $120\,\mathrm{s}$ of each recording, at $\Delta t = 0.01\,\mathrm{s}$.
 
-The optical body rate is the right-trivialised increment of $q$.
+%On \texttt{v3\_02}, \texttt{v3\_12}, \texttt{v3\_14} and \texttt{v3\_15} its $x$ and $y$ axes point
+%the opposite way, which is the mounting
+
+\section{Diagnostics Tests}
+In this section we describe the tests used to uncover the problem.
+We apply the tests to the first two minutes of $7$ recordings.
+
+
+\subsection{Angular velocity test}
+Denote $\boldsymbol{\omega}_k$ the $k$-th angular velocity sample, and with
+$\Delta t = 0.01\,\mathrm{s}$ the sampling period.
+
+%The optical body rate is the right-trivialised increment of $q$.
 Over one sample the attitude advances by a body rotation,
 \[
   q_{k+1} = q_k\otimes\exp(\boldsymbol{\omega}_k\Delta t),
 \]
-where $\exp$ sends the rotation vector $\boldsymbol{\omega}_k\Delta t$ to the corresponding unit quaternion.
-Left-multiply by $q_k^{-1}$. Associativity and $q_k^{-1}\otimes q_k = 1$ isolate the increment,
+where $\exp$ denotes the exponential map that converts  the rotation vector
+$\boldsymbol{\omega}_k\Delta t$ to a corresponding unit quaternion.
+Left-multiplying by $q_k^{-1}$ we isolate the increment,
 \[
   q_k^{-1}\otimes q_{k+1} = \exp(\boldsymbol{\omega}_k\Delta t).
 \]
-$\mathrm{Log}$ inverts $\exp$ for a rotation of angle less than $\pi$, so
+Inverting with the logarithmic map for a rotation of angle less than $\pi$, we obtain the
+\textbf{angular velocity in the optical body frame} obtained from vicon:
 \begin{equation}
   \boldsymbol{\omega}_k
   = \frac{1}{\Delta t}\,\mathrm{Log}\bigl(q_k^{-1}\otimes q_{k+1}\bigr) .
   \label{eq:omega}
 \end{equation}
-It is compared with the gyroscope midpoint
-$\tilde{\boldsymbol{\omega}}_k = \tfrac12\bigl(\boldsymbol{\omega}^{\mathrm{imu}}_k + \boldsymbol{\omega}^{\mathrm{imu}}_{k+1}\bigr)$
-on samples with $\|\tilde{\boldsymbol{\omega}}\| > 0.5\,\mathrm{rad/s}$.
-With $c_i = \mathrm{corr}(\tilde\omega_i, \omega_i)$ the per-axis correlation, reverse the horizontal axes when the reversed signs agree better:
+
+We want to compare this with  IMU angular velocities in the IMU body frame,
+$\boldsymbol{\omega}^{\mathrm{imu}}_k$.
+
+First, we smooth the IMU measurements with a local average,
+$\tilde{\boldsymbol{\omega}}_k =
+\tfrac12\bigl(\boldsymbol{\omega}^{\mathrm{imu}}_k +
+\boldsymbol{\omega}^{\mathrm{imu}}_{k+1}\bigr)$.
+Further, we consider only those samples with a large enough velocity,
+$\|\tilde{\boldsymbol{\omega}}\| > 0.5\,\mathrm{rad/s}$.
+Then, we compute the per-axis correlations
+\begin{equation}
+\label{eq:wcorr}
+\boldsymbol{c} = \mathrm{corr}_{k}(\tilde{\boldsymbol{\omega}}_{k}, \boldsymbol{\omega}_k)
+\end{equation}
+
+Large and negative correlations in the $x$ and $y$ axes indicate that these axes are
+inverted. Moreover, this can be used as a criterion to decide when to apply the correction
+(\ref{eq:rz}) to reverse the axes:
 \begin{equation}
   \text{reverse } x,y
   \iff
@@ -58,55 +92,88 @@ With $c_i = \mathrm{corr}(\tilde\omega_i, \omega_i)$ the per-axis correlation, r
   \label{eq:test}
 \end{equation}
 
-On a sequence whose axes agree the two rates overlie.
-On a reversed sequence they keep the same shape, with opposite sign on $x$ and $y$ and the same sign on $z$.
-The stretches are a few seconds of large motion.
+Figure~\ref{fix:gyros_ok} shows a sequence where the IMU and optical frames agree: the two angular
+velocities $\tilde{\boldsymbol{\omega}}$ and $\boldsymbol{\omega}$ overlap.
+On the contrary, figure \ref{fix:gyros_wrong} shows a case where both frames differ: the $x$ and $y$
+coordinates of both angular velocities clearly differ, while the $z$ coordinate remains the same.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{vicon_axis_omega_v3_13}
-\caption{Optical rate $\omega_i$ and gyroscope midpoint $\tilde{\omega}_i$ on \texttt{v3\_13}, whose axes agree. The two traces overlie.}
+\caption{Optical rate $\omega_i$ and gyroscope midpoint $\tilde{\omega}_i$ on \texttt{v3\_13}, whose
+  axes agree. The two traces overlie.}
+\label{fix:gyros_ok}
 \end{figure}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{vicon_axis_omega_v3_12}
-\caption{The same comparison on \texttt{v3\_12}. The shapes match, with $x$ and $y$ inverted and $z$ unchanged.}
+\caption{The same comparison on \texttt{v3\_12}. The shapes match, with $x$ and $y$ inverted and $z$
+  unchanged.}
+\label{fix:gyros_wrong}
 \end{figure}
 
-The second test does not use the gyroscope.
-From $20\,\mathrm{s}$ to $110\,\mathrm{s}$, the lab specific force is a 9-sample moving average of
+\subsection{Acceleration test}
+First, we compute the ``optical specific force'' $\mathbf{f}$ as the second-derivative of the
+optical position $\mathbf{p}$
 \begin{equation}
   \mathbf{f}_k
   = \frac{\mathbf{p}_{k+1} - 2\mathbf{p}_k + \mathbf{p}_{k-1}}{\Delta t^2}
-  + \begin{pmatrix} 0 \\ 0 \\ g \end{pmatrix},
+  + \begin{pmatrix} 0 \\ 0 \\ g \end{pmatrix}.
   \label{eq:force}
 \end{equation}
-and the accelerometer is rotated by the same quaternion under each mounting,
+This specific force is expressed in the world frame of reference.
+%We smooth this sequence with a 9-sample moving average.
+
+Then, we express the IMU acceleration $\mathbf{a}^{\mathrm{imu}}$ in the world frame of reference.
+This implies rotating with the correction matrix $R_z$ from (\ref{eq:rz}), if needed, and then
+with the rotation matrix $R(q)$. We write the world-frame acceleration as
 \begin{equation}
-  \mathbf{a}^{\mathrm{lab}} = R(q)\,R\,\mathbf{a},
+  \mathbf{a}^{\mathrm{world}} = R(q)\,R\,\mathbf{a}^{\mathrm{imu}}.
   \qquad R \in \{I,\, R_z(\pi)\} .
   \label{eq:acc}
 \end{equation}
-With $R = I$, the same two stretches give the accelerometer against the specific force.
-On \texttt{v3\_13} the accelerometer follows $f$.
-On \texttt{v3\_12} the traces run against each other, and the lab vertical of the accelerometer sits near $-g$ while $f_z$ sits near $+g$.
-A pure sign flip of lab $x$ and $y$ is not what $R(q)$ does to a body yaw, so those two components are not mirrors of $f$.
+
+Figures~\ref{fig:acc_ok} and \ref{fig:acc_wrong} show the behavior of the specific force when using $R=I$.
+For an aligned sequence, Figure~\ref{fig:acc_ok} shows that both traces overlap, while
+Figure~\ref{fig:acc_wrong} shows that the traces differ on an unaligned sequence:
+the vertical component of the accelerometer sits near $-g$ while $f_z$ sits near $+g$, while the
+other two components are not mirrored due to the effect of $R(q)$.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{vicon_axis_acc_v3_13}
-\caption{Specific force $f_k$ and lab accelerometer $a^{\mathrm{lab}}_k$ at $R = I$ on \texttt{v3\_13}, the same stretch as Figure~1. The accelerometer follows $f$.}
+\caption{Specific force $f_k$ and lab accelerometer $a^{\mathrm{world}}_k$ at $R = I$ on
+  \texttt{v3\_13}, the same stretch as Figure~1. The accelerometer follows $f$.}
+\label{fig:acc_ok}
 \end{figure}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{vicon_axis_acc_v3_12}
 \caption{The same comparison on \texttt{v3\_12}, the stretch of Figure~2.
-The traces run against each other, and the lab vertical of the accelerometer sits near $-g$ while $f_z$ sits near $+g$.}
+The traces run against each other, and the lab vertical of the accelerometer sits near $-g$ while
+$f_z$ sits near $+g$.}
+\label{fig:acc_wrong}
 \end{figure}
 
-The columns below are $\mathrm{corr}(\mathbf{a}^{\mathrm{lab}}, \mathbf{f})$, averaged over the three axes.
+Once more, a numerical test to determine the need to correct can be based on correlations.
+First compute the correlation coefficients between both measurements, and then average them over all
+components:
+\begin{align}
+\nonumber
+  \mathbf{\gamma} &=\mathrm{corr}(\mathbf{a}^{\mathrm{world}}, \mathbf{f})\\
+  \Gamma &= \frac{1}{3}\sum_{i=1}^3\mathbf{\gamma}_i.
+\label{eq:acorr}
+\end{align}
+The correlation $\Gamma$ can be computed in the two cases, $R=I$ and $R=R_z$. If the correlation for
+the second case is larger than for the first one, then the correction is needed.
+
+\subsection{Numerical comparisons}
+The table below shows the numerical indicators that can be used to determine the need to apply the
+correction (\ref{eq:rz}).
+For each test sequence, the component-wise gyroscope correlations (\ref{eq:wcorr}) and the
+accelerometer correlations (\ref{eq:acorr}) are shown.
 
 \begin{center}
   \begin{tabular}{lrrrrr}
@@ -115,20 +182,103 @@ The columns below are $\mathrm{corr}(\mathbf{a}^{\mathrm{lab}}, \mathbf{f})$, av
     \cmidrule(lr){2-4} \cmidrule(lr){5-6}
     sequence & $c_x$ & $c_y$ & $c_z$ & $R=I$ & $R=R_z(\pi)$ \\
     \midrule
-    v3\_01 & $+0.51$ & $+0.45$ & $+0.88$ & $+0.89$ & $-0.79$ \\
-    v3\_02 & $-0.30$ & $-0.35$ & $+0.72$ & $-0.48$ & $+0.86$ \\
-    v3\_11 & $+0.45$ & $+0.60$ & $+0.78$ & $+0.65$ & $-0.47$ \\
-    v3\_12 & $-0.60$ & $-0.70$ & $+0.87$ & $-0.57$ & $+0.95$ \\
-    v3\_13 & $+0.95$ & $+0.77$ & $+0.99$ & $+0.96$ & $-0.91$ \\
-    v3\_14 & $-0.46$ & $-0.69$ & $+0.71$ & $-0.34$ & $+0.80$ \\
-    v3\_15 & $-0.45$ & $-0.55$ & $+0.74$ & $-0.44$ & $+0.92$ \\
+    \texttt{v3\_01} & $+0.51$ & $+0.45$ & $+0.88$ & $+0.89$ & $-0.79$ \\
+    \texttt{v3\_02} & $-0.30$ & $-0.35$ & $+0.72$ & $-0.48$ & $+0.86$ \\
+    \texttt{v3\_11} & $+0.45$ & $+0.60$ & $+0.78$ & $+0.65$ & $-0.47$ \\
+    \texttt{v3\_12} & $-0.60$ & $-0.70$ & $+0.87$ & $-0.57$ & $+0.95$ \\
+    \texttt{v3\_13} & $+0.95$ & $+0.77$ & $+0.99$ & $+0.96$ & $-0.91$ \\
+    \texttt{v3\_14} & $-0.46$ & $-0.69$ & $+0.71$ & $-0.34$ & $+0.80$ \\
+    \texttt{v3\_15} & $-0.45$ & $-0.55$ & $+0.74$ & $-0.44$ & $+0.92$ \\
     \bottomrule
   \end{tabular}
 \end{center}
-\noindent The larger accelerometer correlation selects the same $R$ as \eqref{eq:test}.
 
-Here $c_z$ is positive on all seven sequences ($+0.71$ to $+0.99$), so the vertical axes already agree.
-The matching horizontal signs bring the position residual down to about $1.2$--$1.8\,\mathrm{m/s^2}$ on the four reversed sequences; the opposite signs leave about $20$--$27\,\mathrm{m/s^2}$.
+It can be seen that in all cases both criteria agree.
+Sequences \texttt{v3\_01}, \texttt{v3\_11} and \texttt{v3\_13} don't need to be corrected, while
+sequences \texttt{v3\_02}, \texttt{v3\_12}, \texttt{v3\_14} and \texttt{v3\_15} need to be corrected.
+
+Note that $c_z$ is positive on all seven sequences ($+0.71$ to $+0.99$), so the vertical axes agree.
+
+
+\section{Roll and pitch from the accelerometer}
+At rest the accelerometer reads the specific force of gravity in the body frame,
+\[
+  \mathbf{a} = R(q)^{\mathsf T}\begin{pmatrix} 0 \\ 0 \\ g \end{pmatrix}.
+\]
+Write the optical attitude as the intrinsic Z-Y-X rotation
+\(R(q) = R_z(\psi)\,R_y(\theta)\,R_x(\phi)\),
+with roll \(\phi\), pitch \(\theta\) and yaw \(\psi\).
+A yaw about the lab vertical leaves \((0,0,g)^{\mathsf T}\) unchanged, so \(\psi\) drops out and
+\begin{align*}
+  a_x &= -g\sin\theta, \\
+  a_y &= g\cos\theta\sin\phi, \\
+  a_z &= g\cos\theta\cos\phi.
+\end{align*}
+For \(\theta\in[-\pi/2,\pi/2]\) one has \(\cos\theta\ge 0\), and the two angles are
+\begin{equation}
+  \phi = \operatorname{atan2}(a_y, a_z),
+  \qquad
+  \theta = \operatorname{atan2}\bigl(-a_x,\, \sqrt{a_y^2 + a_z^2}\bigr).
+  \label{eq:tilt}
+\end{equation}
+Replacing \((a_x, a_y)\) by \((-a_x, -a_y)\), which is what \(R_z(\pi)\) does, changes \((\phi,
+\theta)\) to \((-\phi, -\theta)\).
+
+Note that the formulas hold when \(\mathbf{a}\) is gravity.
+We can consider them approximate under mild accelerations, but they will become invalid  during hard
+motion.
+
+We evaluated these pitch and roll estimates from the accelerometer, and compared them with the roll
+and pitch of the optical quaternion.
+We focus on the first $10\,\mathrm{s}$ of data, where $\|\mathbf{a}\|$ is closest to $\mathbf{g}$.
+
+Figure~\ref{fig:euler_acc_good} shows both estimates in a sequence that doesn't require inversion;
+in this case, both pitch estimates show a large agreement.
+On the contrary, Figure \ref{fig:euler_acc_bad} shows that, on an inverted sequence, the pitch
+estimates are inverted as well.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{vicon_axis_tilt_v3_13}
+\caption{Roll and pitch on \texttt{v3\_13}, axes already in agreement, from \eqref{eq:tilt} and from
+  the optical quaternion. Pitch follows the optical angle. Roll is the noisier of the two.}
+\label{fig:euler_acc_good}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{vicon_axis_tilt_v3_12}
+\caption{The same comparison on \texttt{v3\_12}, whose horizontal axes are reversed.
+  Pitch from \eqref{eq:tilt} is the negative of the optical pitch.
+  Even though rolls show a difference, roll from \eqref{eq:tilt} is not the negative of optical roll
+  because of the alignment of gravity: $a_y$ and $a_z$ only see a fraction of gravity in those
+  frames due to the  $\cos\theta$ factor in (\eqref{eq:tilt}); thus the difference is not an exact negation  }
+\label{fig:euler_acc_bad}
+\end{figure}
+
+The table is the RMSE of the wrapped difference, in degrees, over the whole prefix.
+Pitch selects the same \(R\) as \eqref{eq:test}.
+Roll does not: \(a_y\) and \(a_z\) are scaled by \(\cos\theta\), and on these recordings \(\theta\) spends most of its time well away from zero, so roll is read from the two components that linear acceleration corrupts first.
+
+\begin{center}
+  \begin{tabular}{lrrrr}
+    \toprule
+    & \multicolumn{2}{c}{roll} & \multicolumn{2}{c}{pitch} \\
+    \cmidrule(lr){2-3} \cmidrule(lr){4-5}
+    sequence & $R=I$ & $R=R_z(\pi)$ & $R=I$ & $R=R_z(\pi)$ \\
+    \midrule
+    v3\_01 & $119.2$ & $105.8$ & $26.5$ & $125.0$ \\
+    v3\_02 & $71.8$ & $69.7$ & $139.2$ & $18.8$ \\
+    v3\_11 & $102.2$ & $116.7$ & $43.9$ & $104.2$ \\
+    v3\_12 & $72.8$ & $71.4$ & $139.7$ & $19.5$ \\
+    v3\_13 & $84.5$ & $70.0$ & $29.8$ & $119.5$ \\
+    v3\_14 & $28.8$ & $27.7$ & $142.1$ & $12.5$ \\
+    v3\_15 & $66.1$ & $70.0$ & $126.6$ & $18.9$ \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+\noindent With the matching mounting the pitch RMSE is $12.5^\circ$--$43.9^\circ$.
+With the other mounting it is $104^\circ$--$142^\circ$.
 
 \section{Correction}
 When \eqref{eq:test} holds, the measurements are mapped into the optical body and the pose is left as recorded:
