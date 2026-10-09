@@ -251,16 +251,15 @@ inversion, while otherwise they become inverted as well.
 \label{fig:euler_acc}
 \end{figure}
 
-Table~\ref{table:rmse_pitch_acc} shows the RMSE of the pitch
-difference, in degrees, over the first $120\,\mathrm{s}$, with and
-without applying the correction from (\ref{eq:test}). It can be seen
-that the correction realigns the pitches, bringing their RMSE down to
-a similar level for all sequences.
+Table~\ref{table:rmse_pitch_acc} shows the RMSE of the pitch difference, in degrees, over the first
+$120\,\mathrm{s}$, with and without applying the correction from (\ref{eq:test}). It can be seen
+that the correction realigns the pitches, bringing their RMSE down to a similar level for all
+sequences.
 
 \begin{table}[h]
   \centering
-  \caption{RMSE between optical pitch and accelerometer estimate from
-    (\ref{eq:tilt}), with and without correction. }
+  \caption{RMSE between optical pitch and accelerometer estimate from (\ref{eq:tilt}), with and
+    without correction. }
   \label{table:rmse_pitch_acc}
   \begin{tabular}{lrr}
     \toprule
@@ -287,48 +286,45 @@ When \eqref{eq:test} holds, the measurements are mapped into the optical body an
   q \text{ and } \mathbf{p} \text{ unchanged}.
   \label{eq:fix}
 \end{equation}
-\texttt{load\_trial} applies \eqref{eq:fix} in memory.
-\texttt{scripts/fix\_vicon\_axes.py} writes the same sign flips into the CSV.
-A file that already satisfies $c_x + c_y \ge 0$ is not rewritten.
 
 \section{Effect of the correction}
-The two tests fix the mounting from the gyroscope and the accelerometer alone.
-To see what the horizontal inversion does to an attitude error, the same prefixes are given to an estimator, once with the axes as recorded and once after \eqref{eq:fix}.
-The estimator is VQF, in 6-axis mode with $\tau_{\mathrm{acc}}=3$, the value fixed on BROAD and not retuned here.
-It was selected because it does not depend on the filter derived in this report, so a change in its error is evidence about the axes.
+In this section, we test the effect of the proposed test and correction on an actual attitude
+estimator.
+We apply the same estimator twice, once with the axes as recorded and once after \eqref{eq:fix}.
+We choose as estimator VQF, in 6-axis mode with $\tau_{\mathrm{acc}}=3$.
 
-The score is the inclination.
-VQF has no magnetometer, so its heading differs from the optical heading by an arbitrary constant and a slow drift, and the total rotation error folds that unobservable part into the number.
-Inclination does not.
-The lab error quaternion is $\hat{q}\otimes q^{-1} = (w,x,y,z)$, and
+% VQF has no magnetometer, so its heading differs from the optical heading by an arbitrary constant and a slow drift, and the total rotation error folds that unobservable part into the number.
+% Inclination does not.
+The error quaternion is $\hat{q}\otimes q^{-1}$.
+With $R$ the rotation matrix of that quaternion, the error angle is
 \begin{equation}
-  \delta = 2\arccos\sqrt{w^{2}+z^{2}}
-  \label{eq:incl}
+  \theta = \arccos\frac{\operatorname{tr}(R)-1}{2}.
+  \label{eq:angle}
 \end{equation}
-is the angle between the upward lab axis and the direction $R(\hat{q}\otimes q^{-1})$ assigns to it.
-A heading is a rotation about that axis, and for a pure heading $\delta = 0$.
-A lab yaw $q_z(\psi)\otimes\hat{q}$ mixes $w$ with $z$ and $x$ with $y$, so it leaves $\delta$ unchanged, and removing the best constant heading offset does not alter the score.
-The inversion is a body yaw $\hat{q}\otimes q_z(\pi)$.
-Once the object tilts, that yaw is no longer a rotation about the lab vertical, and $\delta$ moves, which is why the heading alignment does not hide the wrong mounting.
+%It equals $2\arccos|w|$ when the quaternion is written $(w,x,y,z)$.
 
-The table is the RMSE of $\delta$ over the first $120\,\mathrm{s}$, in degrees.
+Table~\ref{table:rmse_angle} shows the RMSE of $\theta$, in degrees,
+over the first $120\,\mathrm{s}$, with and without applying the
+correction from \eqref{eq:test}. It can be seen how the correction
+drastically reduces the error in the affected sequences.
 
-\begin{center}
+\begin{table}[h]
+  \centering
+  \caption{RMSE of the rotation angle $\theta$, with and without correction.}
+  \label{table:rmse_angle}
   \begin{tabular}{lrr}
     \toprule
-    sequence & $R=I$ & $R=R_z(\pi)$ \\
+    sequence & Not corrected & Corrected \\
     \midrule
-    v3\_01 & $16.9$ & $150$ \\
-    v3\_02 & $143$  & $10.3$ \\
-    v3\_11 & $19.1$ & $148$ \\
-    v3\_12 & $144$  & $5.9$ \\
-    v3\_13 & $5.4$  & $122$ \\
-    v3\_14 & $143$  & $7.0$ \\
-    v3\_15 & $132$  & $7.6$ \\
+    \texttt{v3\_01} & $23.3$ & $23.3$ \\
+    \texttt{v3\_02} & $143.5$ & $18.6$ \\
+    \texttt{v3\_11} & $27.5$ & $27.5$ \\
+    \texttt{v3\_12} & $145.0$ & $20.3$ \\
+    \texttt{v3\_13} & $27.6$ & $27.6$ \\
+    \texttt{v3\_14} & $143.4$ & $9.4$ \\
+    \texttt{v3\_15} & $132.5$ & $10.4$ \\
     \bottomrule
   \end{tabular}
-\end{center}
-\noindent The smaller value selects the same $R$ as \eqref{eq:test}.
-With the wrong mounting the RMSE is $122^\circ$--$150^\circ$; with the matching one it is $5^\circ$--$19^\circ$.
+\end{table}
 
 \end{document}
