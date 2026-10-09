@@ -4,6 +4,8 @@ The optical rate and the gyroscope midpoint, and the lab accelerometer and
 the position-derived specific force, on one sequence whose axes already
 agree and one whose horizontal axes are reversed.  Windows are short
 stretches of large motion so the shape, and the sign, can be read.
+A third figure compares pitch from the accelerometer with the optical
+pitch over the opening of the same two prefixes.
 """
 
 from __future__ import annotations
@@ -15,11 +17,15 @@ import numpy as np
 from wattitude.data.vicon import _body_rate, load_trial, short_root
 from wattitude.eskf import GRAVITY
 from wattitude.eval.report import figures_dir
+from wattitude.quaternion import quat_to_euler
 
 DT = 0.01
 # (name, start_s, stop_s).  Chosen where the motion is large.
 GYRO_WINDOWS = (("v3_13", 99.2, 103.2), ("v3_12", 91.0, 95.0))
 ACC_WINDOWS = GYRO_WINDOWS
+# Opening of each prefix: the specific force is closest to gravity here,
+# which is where the tilt formulas apply.
+TILT_WINDOWS = (("v3_13", 0.0, 10.0), ("v3_12", 0.0, 10.0))
 
 
 def _rotations(q: np.ndarray) -> np.ndarray:
@@ -53,6 +59,21 @@ def specific_force(pos: np.ndarray, dt: float = DT) -> np.ndarray:
 def lab_accelerometer(acc: np.ndarray, quat: np.ndarray) -> np.ndarray:
     """Accelerometer mapped by the optical attitude with ``R = I``."""
     return np.einsum("nij,nj->ni", _rotations(quat), acc)
+
+
+def accel_tilt_deg(acc: np.ndarray) -> np.ndarray:
+    """Roll and pitch in degrees from the accelerometer, Z-Y-X, |pitch| <= 90°."""
+    roll = np.arctan2(acc[:, 1], acc[:, 2])
+    hyp = np.hypot(acc[:, 1], acc[:, 2])
+    pitch = np.arctan2(-acc[:, 0], hyp)
+    return np.rad2deg(np.column_stack([roll, pitch]))
+
+
+def _break_wraps(angle: np.ndarray, jump: float = 180.0) -> np.ndarray:
+    out = np.asarray(angle, dtype=float).copy()
+    d = np.abs(np.diff(out))
+    out[1:][d > jump] = np.nan
+    return out
 
 
 def _style():
@@ -124,6 +145,27 @@ def main() -> None:
             r"sample $k$",
         )
         print(f"wrote {out / f'vicon_axis_acc_{name}.png'}")
+
+    plt = _style()
+    fig, axes = plt.subplots(2, 1, figsize=(7.2, 4.4), sharex=True)
+    for ax, (name, start, stop) in zip(axes, TILT_WINDOWS):
+        trial = load_trial(name, root=root, align_axes=False)
+        truth = np.rad2deg(quat_to_euler(trial.opt_quat)[:, 1])
+        est = accel_tilt_deg(trial.acc)[:, 1]
+        lo, hi = int(round(start / DT)), int(round(stop / DT))
+        t = np.arange(lo, hi) * DT
+        ax.plot(t, _break_wraps(truth[lo:hi]), color="k", lw=1.3, label="Vicon")
+        ax.plot(t, _break_wraps(est[lo:hi]), color="tab:blue", lw=1.0, label="accelerometer")
+        ax.set_ylabel("pitch (deg)")
+        ax.set_title(f"{name}, {start:.0f}–{stop:.0f} s")
+        ax.grid(alpha=0.25)
+    axes[0].legend(loc="upper right", fontsize=8, ncol=2)
+    axes[-1].set_xlabel("time (s)")
+    fig.tight_layout()
+    path = out / "vicon_axis_tilt.png"
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+    print(f"wrote {path}")
 
 
 if __name__ == "__main__":
