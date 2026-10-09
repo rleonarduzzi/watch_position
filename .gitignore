@@ -23,7 +23,7 @@ reports/cache/
 reports/figures/*.html
 
 # The paper itself, retrievable from its DOI.
-*.pdf
+techrxiv.175492124.47988269_v1.pdf
 
 # LaTeX auxiliary files
 reports/*.aux
